@@ -1,0 +1,47 @@
+# Environment
+.env
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Docker volumes (managed by docker-compose)
+neo4j_data/
+qdrant_data/
+
+# Shallow GitHub clones for ingestion
+.cache/
+
+# LangGraph conversation checkpoints (local dev)
+checkpoints.db
+checkpoints.db-*
+*.db-journal
+
+# Frontend build artifacts (also in frontend/.gitignore)
+frontend/node_modules/
+frontend/.next/
+frontend/tsconfig.tsbuildinfo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+.pytest_cache/
+htmlcov/
+.coverage
+
+# Distribution
+dist/
+build/
+*.egg-info/

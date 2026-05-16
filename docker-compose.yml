@@ -1,0 +1,73 @@
+# ==============================================================================
+# Docker Compose: Local Infrastructure for CodeGraph AI Codebase Analyzer
+# ==============================================================================
+# Spins up Neo4j (Knowledge Graph) and Qdrant (Vector DB) locally.
+# Usage: docker-compose up -d
+# ==============================================================================
+
+version: "3.9"
+
+services:
+  # ============================================================================
+  # Neo4j — Knowledge Graph Store
+  # ============================================================================
+  # Stores structural relationships: Files, Classes, Functions, and edges
+  # like IMPORTS, CALLS, DEFINES, CONTAINS.
+  # Browser UI: http://localhost:7474  (default creds: neo4j / graphrag2024)
+  # Bolt protocol: bolt://localhost:7687
+  # ============================================================================
+  neo4j:
+    image: neo4j:5-community
+    container_name: graphrag-neo4j
+    restart: unless-stopped
+    ports:
+      - "7474:7474"   # HTTP browser interface
+      - "7687:7687"   # Bolt protocol (driver connections)
+    environment:
+      # Disable auth for local dev — set NEO4J_AUTH=neo4j/<password> in prod.
+      NEO4J_AUTH: neo4j/graphrag2024
+      # Enable APOC plugin for advanced Cypher procedures (merge, batching, etc.)
+      NEO4J_PLUGINS: '["apoc"]'
+      # Increase default memory for larger codebases
+      NEO4J_server_memory_heap_initial__size: 512m
+      NEO4J_server_memory_heap_max__size: 1G
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p graphrag2024 'RETURN 1'"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============================================================================
+  # Qdrant — Vector Database
+  # ============================================================================
+  # Stores chunked docstrings and raw code as dense vector embeddings for
+  # semantic similarity search.
+  # REST API: http://localhost:6333
+  # gRPC: localhost:6334
+  # Dashboard: http://localhost:6333/dashboard
+  # ============================================================================
+  qdrant:
+    image: qdrant/qdrant:v1.12.1
+    container_name: graphrag-qdrant
+    restart: unless-stopped
+    ports:
+      - "6333:6333"   # REST API
+      - "6334:6334"   # gRPC (higher throughput for batch ops)
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:6333/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  neo4j_data:
+    driver: local
+  neo4j_logs:
+    driver: local
+  qdrant_data:
+    driver: local

@@ -1,0 +1,37 @@
+# ==============================================================================
+# CodeGraph AI Codebase Analyzer — Dependencies
+# ==============================================================================
+# Install: pip install -r requirements.txt
+# NOTE: Pin to specific versions for reproducibility in production.
+# ==============================================================================
+
+# --- Core Orchestration ---
+langgraph>=0.2.0
+langgraph-checkpoint-sqlite>=2.0.0  # SqliteSaver for conversation checkpointing
+langchain>=0.3.0
+langchain-core>=0.3.0
+langchain-openai>=0.2.0          # Modular LLM interface (swap for Groq/local later)
+langchain-google-genai>=2.0.0    # Google Gemini support
+langchain-groq>=0.2.0            # Groq chat fallback / primary
+
+# --- Backend API ---
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0        # ASGI server for FastAPI
+pydantic>=2.9.0                  # Request/response validation (FastAPI dep)
+
+# --- Database Drivers ---
+neo4j>=5.25.0                    # Official Neo4j Python driver (Bolt protocol)
+qdrant-client>=1.12.0            # Qdrant Python SDK (REST + gRPC)
+
+# --- Embeddings & NLP ---
+tiktoken>=0.8.0                  # Token counting for OpenAI models
+openai>=1.50.0                   # Direct OpenAI SDK (used by langchain-openai)
+
+# --- Utilities ---
+python-dotenv>=1.0.0             # Load .env for API keys and config
+pydantic-settings>=2.5.0         # Typed settings from environment variables
+httpx>=0.27.0                    # Async HTTP client (FastAPI test client)
+
+# --- Dev / Testing ---
+pytest>=8.3.0
+pytest-asyncio>=0.24.0
