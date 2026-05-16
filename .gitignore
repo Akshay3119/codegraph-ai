@@ -3,6 +3,8 @@
 __pycache__/
 *.pyc
 *.pyo
+cloudrun.env
+gcp-sa-key.json
 
 # IDE
 .vscode/

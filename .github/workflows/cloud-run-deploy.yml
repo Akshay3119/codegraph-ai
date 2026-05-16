@@ -1,0 +1,59 @@
+# Deploy API to Google Cloud Run on push to main.
+# One-time setup: see comments in workflow and repo docs below.
+#
+# Required GitHub secrets:
+#   GCP_PROJECT_ID  — e.g. codegraph-ai-12345
+#   GCP_REGION      — e.g. us-central1
+#   GCP_SA_KEY      — JSON key for a deploy service account
+#
+# Set Cloud Run env vars once (manual deploy with cloudrun.env), then CI only
+# ships new code; existing env vars on the service are preserved.
+
+name: Cloud Run Deploy
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "api/**"
+      - "agent/**"
+      - "ingestion/**"
+      - "config.py"
+      - "qdrant_util.py"
+      - "requirements.txt"
+      - "Dockerfile"
+      - ".dockerignore"
+      - ".github/workflows/cloud-run-deploy.yml"
+
+jobs:
+  deploy:
+    name: Deploy codegraph-api
+    runs-on: ubuntu-latest
+    concurrency:
+      group: cloud-run-deploy
+      cancel-in-progress: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy codegraph-api \
+            --project "${{ secrets.GCP_PROJECT_ID }}" \
+            --region "${{ secrets.GCP_REGION }}" \
+            --source . \
+            --platform managed \
+            --allow-unauthenticated \
+            --port 8000 \
+            --memory 1Gi \
+            --cpu 1 \
+            --timeout 900 \
+            --max-instances 3 \
+            --min-instances 0
