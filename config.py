@@ -70,6 +70,17 @@ class Settings(BaseSettings):
     neo4j_password: str = Field(default="graphrag2024")
 
     # ── Qdrant ───────────────────────────────────────────────────────────
+    qdrant_url: Optional[str] = Field(
+        default=None,
+        description=(
+            "Full Qdrant URL for cloud/managed instances, e.g. "
+            "https://xxxx.cloud.qdrant.io:6333. When set, overrides host/port."
+        ),
+    )
+    qdrant_api_key: Optional[str] = Field(
+        default=None,
+        description="API key for Qdrant Cloud (optional for local Docker).",
+    )
     qdrant_host: str = Field(default="localhost")
     qdrant_port: int = Field(default=6333)
     qdrant_collection_name: str = Field(default="codebase_chunks")

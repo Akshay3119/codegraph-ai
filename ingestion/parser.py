@@ -43,7 +43,6 @@ from textwrap import dedent
 from typing import Any
 
 from neo4j import GraphDatabase
-from qdrant_client import QdrantClient
 from qdrant_client.models import (
     Distance,
     PointStruct,
@@ -56,6 +55,7 @@ from langchain_google_genai import GoogleGenerativeAIEmbeddings
 # and imported from the project root.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from config import settings  # noqa: E402
+from qdrant_util import get_qdrant_client, qdrant_connection_label  # noqa: E402
 
 # ── Logging ──────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -478,27 +478,26 @@ class QdrantWriter:
 
     def __init__(
         self,
-        host: str,
-        port: int,
         collection_name: str,
         embedding_model: str,
         embedding_dim: int,
-        api_key: str | None = None,
-        api_base: str | None = None,
+        google_api_key: str | None = None,
     ):
-        self.client = QdrantClient(host=host, port=port)
+        self.client = get_qdrant_client()
         self.collection_name = collection_name
         self.embedding_dim = embedding_dim
 
         # Build embedding function for Gemini
         self.embeddings = GoogleGenerativeAIEmbeddings(
             model=embedding_model,
-            google_api_key=api_key,
+            google_api_key=google_api_key,
             output_dimensionality=embedding_dim,
         )
 
         self._ensure_collection()
-        logger.info(f"Qdrant writer initialized → {host}:{port}/{collection_name}")
+        logger.info(
+            f"Qdrant writer initialized → {qdrant_connection_label()}/{collection_name}"
+        )
 
     def _ensure_collection(self) -> None:
         """Create the collection if it doesn't already exist."""
@@ -630,12 +629,10 @@ def run_ingestion(codebase_path: Optional[str] = None) -> dict[str, int]:
 
     # ── Stage 3: Qdrant ──────────────────────────────────────────────────
     qdrant_writer = QdrantWriter(
-        host=settings.qdrant_host,
-        port=settings.qdrant_port,
         collection_name=settings.qdrant_collection_name,
         embedding_model=settings.google_embedding_model,
         embedding_dim=settings.embedding_dimension,
-        api_key=settings.google_api_key,
+        google_api_key=settings.google_api_key,
     )
     qdrant_writer.ingest_entities(result.entities)
 

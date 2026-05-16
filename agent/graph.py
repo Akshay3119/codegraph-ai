@@ -58,7 +58,6 @@ from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 from neo4j import GraphDatabase
-from qdrant_client import QdrantClient
 
 # SqliteSaver: try the standalone package first (langgraph >= 0.2.x uses
 # langgraph-checkpoint-sqlite), fall back to the built-in path for older builds.
@@ -77,6 +76,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from config import settings  # noqa: E402
 from agent.llm import invoke_llm  # noqa: E402
+from qdrant_util import get_qdrant_client  # noqa: E402
 
 logger = logging.getLogger("agent.graph")
 
@@ -134,7 +134,7 @@ def _get_neo4j_driver():
 
 def _get_qdrant_client():
     """Lazy Qdrant client constructor."""
-    return QdrantClient(host=settings.qdrant_host, port=settings.qdrant_port)
+    return get_qdrant_client()
 
 
 # ══════════════════════════════════════════════════════════════════════════════

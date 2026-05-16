@@ -563,8 +563,6 @@ async def get_thread_history(thread_id: str, fastapi_request: Request) -> dict:
 async def clear_ingested_data() -> dict:
     """Wipe Neo4j graph and Qdrant collection so a fresh codebase can be ingested."""
     from neo4j import GraphDatabase as _NeoDriver
-    from qdrant_client import QdrantClient as _QdrantClient
-
     errors = []
 
     # Clear Neo4j
@@ -583,7 +581,9 @@ async def clear_ingested_data() -> dict:
 
     # Clear Qdrant collection
     try:
-        client = _QdrantClient(host=settings.qdrant_host, port=settings.qdrant_port)
+        from qdrant_util import get_qdrant_client
+
+        client = get_qdrant_client()
         collections = [c.name for c in client.get_collections().collections]
         if settings.qdrant_collection_name in collections:
             client.delete_collection(settings.qdrant_collection_name)
@@ -763,9 +763,9 @@ async def health_check() -> HealthResponse:
         neo4j_status = f"unhealthy: {e}"
 
     try:
-        from qdrant_client import QdrantClient
+        from qdrant_util import get_qdrant_client
 
-        client = QdrantClient(host=settings.qdrant_host, port=settings.qdrant_port)
+        client = get_qdrant_client()
         client.get_collections()
         qdrant_status = "healthy"
     except Exception as e:
