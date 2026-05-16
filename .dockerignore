@@ -1,0 +1,17 @@
+venv/
+.venv/
+.env
+.env.*
+!.env.example
+__pycache__/
+*.pyc
+.cache/
+frontend/
+checkpoints.db
+checkpoints.db-*
+.git/
+.pytest_cache/
+node_modules/
+.DS_Store
+*.md
+!README.md
