@@ -3,10 +3,16 @@
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
+import { useTheme } from "@/app/components/ThemeProvider";
+import { API, clearIngestedData } from "@/app/lib/api";
+
+function themeColor(name: string, fallback: string): string {
+  if (typeof window === "undefined") return fallback;
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return v || fallback;
+}
 
 const ForceGraph2D = dynamic(() => import("react-force-graph-2d"), { ssr: false });
-
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 interface GraphNode {
   id: string;
@@ -30,6 +36,7 @@ interface GraphData {
 
 interface Props {
   refreshKey?: number;
+  onCleared?: () => void;
 }
 
 const TYPE_COLORS: Record<string, string> = {
@@ -97,7 +104,16 @@ function NodeDetailsPanel({ node, onClose }: { node: GraphNode; onClose: () => v
   );
 }
 
-export default function GraphVisualization({ refreshKey = 0 }: Props) {
+export default function GraphVisualization({ refreshKey = 0, onCleared }: Props) {
+  const { theme } = useTheme();
+  const [clearing, setClearing] = useState(false);
+  const [clearError, setClearError] = useState<string | null>(null);
+  const [graphBg, setGraphBg] = useState("#0a0a0c");
+
+  useEffect(() => {
+    setGraphBg(themeColor("--graph-bg", "#0a0a0c"));
+  }, [theme]);
+
   const { data, error, isLoading, mutate } = useSWR<GraphData>(
     [GRAPH_URL, refreshKey],
     ([url]) => fetcher(url as string),
@@ -290,9 +306,9 @@ export default function GraphVisualization({ refreshKey = 0 }: Props) {
       ctx.beginPath();
       ctx.arc(n.x ?? 0, n.y ?? 0, isSelected ? r * 1.5 : r, 0, 2 * Math.PI);
       ctx.fillStyle = isDimmed
-        ? "rgba(148,163,184,0.2)"
+        ? themeColor("--graph-hover-ring", "rgba(148,163,184,0.2)")
         : isSelected
-          ? "#ffffff"
+          ? themeColor("--graph-label-active", "#ffffff")
           : isSearchMatch
             ? "#facc15"
             : color;
@@ -323,18 +339,18 @@ export default function GraphVisualization({ refreshKey = 0 }: Props) {
         ctx.textBaseline = "top";
         const textW = ctx.measureText(shortLabel).width;
         if (isHovered || isSelected) {
-          ctx.fillStyle = "rgba(10, 10, 12, 0.92)";
+          ctx.fillStyle = themeColor("--graph-label-bg", "rgba(10, 10, 12, 0.92)");
           ctx.fillRect(x - textW / 2 - 5, y - 2, textW + 10, fontSize + 6);
         }
         ctx.fillStyle = isDimmed
-          ? "rgba(148,163,184,0.45)"
+          ? themeColor("--graph-hover-ring", "rgba(148,163,184,0.45)")
           : isSelected || isHovered
-            ? "#ffffff"
-            : "#e2e8f0";
+            ? themeColor("--graph-label-active", "#ffffff")
+            : themeColor("--graph-label-text", "#e2e8f0");
         ctx.fillText(shortLabel, x, y);
       }
     },
-    [selectedNode, hoveredNode, search, matchedIds, selectedId, selectedNeighborIds, showLabels]
+    [selectedNode, hoveredNode, search, matchedIds, selectedId, selectedNeighborIds, showLabels, theme]
   );
 
   const handleNodeHover = useCallback((node: object | null) => {
@@ -406,8 +422,55 @@ export default function GraphVisualization({ refreshKey = 0 }: Props) {
   const typeCounts: Record<string, number> = {};
   for (const n of allNodes) typeCounts[n.type] = (typeCounts[n.type] ?? 0) + 1;
 
+  async function handleBannerClear() {
+    if (!confirm("Remove all ingested data from Neo4j and Qdrant?")) return;
+    setClearing(true);
+    setClearError(null);
+    try {
+      await clearIngestedData();
+      setSelectedNode(null);
+      await mutate({ nodes: [], links: [] }, { revalidate: true });
+      onCleared?.();
+    } catch (err) {
+      setClearError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setClearing(false);
+    }
+  }
+
   return (
     <div className="flex flex-col gap-2.5">
+      <div className="banner-persist flex flex-wrap items-center justify-between gap-2 px-3 py-2.5">
+        <div className="flex items-start gap-2 min-w-0">
+          <svg className="w-4 h-4 text-warning flex-shrink-0 mt-0.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+            <circle cx="8" cy="8" r="6.5"/>
+            <path d="M8 5v1.5M8 10.5v.5" strokeLinecap="round"/>
+          </svg>
+          <p className="text-xs leading-relaxed">
+            <span className="banner-persist-title">Showing data from last ingest</span>
+            <span className="banner-persist-body"> — stored on the server until you clear it.</span>
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => void handleBannerClear()}
+          disabled={clearing}
+          className="btn-danger-subtle text-xs py-1.5 px-2.5 flex-shrink-0"
+        >
+          {clearing ? (
+            <svg className="animate-spin w-3.5 h-3.5" viewBox="0 0 24 24" fill="none">
+              <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" opacity="0.25"/>
+              <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" strokeWidth="3" strokeLinecap="round"/>
+            </svg>
+          ) : (
+            "Clear"
+          )}
+        </button>
+      </div>
+      {clearError && (
+        <p className="text-[11px] text-danger px-1">{clearError}</p>
+      )}
+
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative flex-1 min-w-0">
           <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--fg-4)] pointer-events-none" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -473,13 +536,13 @@ export default function GraphVisualization({ refreshKey = 0 }: Props) {
         </div>
       </div>
 
-      <div className="card relative w-full overflow-hidden" style={{ height: GRAPH_HEIGHT, background: "#0a0a0c" }}>
+      <div className="card relative w-full overflow-hidden" style={{ height: GRAPH_HEIGHT, background: "var(--graph-bg)" }}>
         <div ref={canvasHostRef} className="relative w-full h-full">
           <div className="absolute top-3 left-3 z-10 flex gap-1.5 pointer-events-none">
-            <span className="chip" style={{ background: "rgba(15,15,18,0.8)", backdropFilter: "blur(8px)" }}>
+            <span className="chip" style={{ background: "var(--graph-chip-bg)", backdropFilter: "blur(8px)" }}>
               {displayNodeCount} nodes
             </span>
-            <span className="chip" style={{ background: "rgba(15,15,18,0.8)", backdropFilter: "blur(8px)" }}>
+            <span className="chip" style={{ background: "var(--graph-chip-bg)", backdropFilter: "blur(8px)" }}>
               {displayLinkCount} edges
             </span>
             {(search || activeType) && (
@@ -496,7 +559,7 @@ export default function GraphVisualization({ refreshKey = 0 }: Props) {
 
           <div
             className="absolute bottom-3 left-3 z-10 flex gap-3 px-2.5 py-1.5 rounded-[var(--radius)] pointer-events-none"
-            style={{ background: "rgba(15,15,18,0.8)", backdropFilter: "blur(8px)", border: "1px solid var(--border)" }}
+            style={{ background: "var(--graph-chip-bg)", backdropFilter: "blur(8px)", border: "1px solid var(--border)" }}
           >
             {Object.entries(RELATION_COLORS).map(([type, color]) => (
               <span key={type} className="flex items-center gap-1.5 text-[10px] text-[var(--fg-3)]">
@@ -512,7 +575,7 @@ export default function GraphVisualization({ refreshKey = 0 }: Props) {
             width={graphWidth || 800}
             height={GRAPH_HEIGHT}
             graphData={graphData}
-            backgroundColor="#0a0a0c"
+            backgroundColor={graphBg}
             nodeCanvasObject={paintNode}
             nodeCanvasObjectMode={() => "replace"}
             nodePointerAreaPaint={nodePointerAreaPaint}

@@ -1,8 +1,7 @@
 "use client";
 
-import { useState } from "react";
-
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+import { useEffect, useState } from "react";
+import { API, clearIngestedData } from "@/app/lib/api";
 
 type IngestMode = "github" | "local";
 
@@ -14,7 +13,15 @@ interface IngestResult {
   source: string;
 }
 
-export default function IngestPanel({ onDataChange }: { onDataChange?: () => void }) {
+export default function IngestPanel({
+  onDataChange,
+  onCleared,
+  resetKey = 0,
+}: {
+  onDataChange?: () => void;
+  onCleared?: () => void;
+  resetKey?: number;
+}) {
   const [mode, setMode] = useState<IngestMode>("github");
   const [githubUrl, setGithubUrl] = useState("");
   const [path, setPath] = useState("./sample_codebase");
@@ -25,18 +32,21 @@ export default function IngestPanel({ onDataChange }: { onDataChange?: () => voi
 
   const canSubmit = mode === "github" ? githubUrl.trim().length > 0 : path.trim().length > 0;
 
+  useEffect(() => {
+    if (resetKey > 0) {
+      setResult(null);
+      setError(null);
+    }
+  }, [resetKey]);
+
   async function handleClear() {
     if (!confirm("Remove all ingested data from Neo4j and Qdrant?")) return;
     setClearing(true);
     setResult(null);
     setError(null);
     try {
-      const res = await fetch(`${API}/ingest`, { method: "DELETE" });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.detail ?? `HTTP ${res.status}`);
-      }
-      onDataChange?.();
+      await clearIngestedData();
+      onCleared?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -86,7 +96,7 @@ export default function IngestPanel({ onDataChange }: { onDataChange?: () => voi
       <div className="flex items-center justify-between">
         <label className="section-label">Source</label>
         {result && (
-          <span className="chip" style={{ background: "rgba(16,185,129,0.08)", borderColor: "rgba(16,185,129,0.25)", color: "#34d399" }}>
+          <span className="chip chip-success">
             <span className="status-dot ok" /> Ingested
           </span>
         )}
@@ -186,11 +196,11 @@ export default function IngestPanel({ onDataChange }: { onDataChange?: () => voi
       {/* Error */}
       {error && (
         <div className="flex items-start gap-2 rounded-[var(--radius)] border border-red-500/20 bg-red-500/5 px-3 py-2.5">
-          <svg className="w-3.5 h-3.5 text-red-400 flex-shrink-0 mt-0.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+          <svg className="w-3.5 h-3.5 text-danger flex-shrink-0 mt-0.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
             <circle cx="8" cy="8" r="6.5"/>
             <path d="M8 5v3.5M8 11v.5" strokeLinecap="round"/>
           </svg>
-          <p className="text-[11px] text-red-300 leading-relaxed break-all">{error}</p>
+          <p className="text-[11px] text-danger leading-relaxed break-all">{error}</p>
         </div>
       )}
 

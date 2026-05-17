@@ -23,6 +23,11 @@ qdrant_data/
 
 # Shallow GitHub clones for ingestion
 .cache/
+.cache/**
+
+# Local GCP deploy keys (never commit)
+gcp-sa-key.json
+*.json.key
 
 # LangGraph conversation checkpoints (local dev)
 checkpoints.db

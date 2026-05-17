@@ -1,10 +1,12 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import Image from "next/image";
 import { useCallback, useEffect, useState } from "react";
 import { v4 as uuidv4 } from "uuid";
 import IngestPanel from "@/app/components/IngestPanel";
 import StreamingAnswer, { NodeEvent } from "@/app/components/StreamingAnswer";
+import ThemeToggle from "@/app/components/ThemeToggle";
 
 const GraphVisualization = dynamic(
   () => import("@/app/components/GraphVisualization"),
@@ -34,6 +36,12 @@ export default function Home() {
   const [finalAnswer, setFinalAnswer] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [graphRefreshKey, setGraphRefreshKey] = useState(0);
+  const [ingestUiReset, setIngestUiReset] = useState(0);
+
+  const handleIngestCleared = useCallback(() => {
+    setGraphRefreshKey((k) => k + 1);
+    setIngestUiReset((k) => k + 1);
+  }, []);
   const [threadStatus, setThreadStatus] = useState<{
     loading: boolean;
     found: boolean;
@@ -176,25 +184,57 @@ export default function Home() {
   return (
     <div className="relative min-h-screen flex flex-col">
       {/* ── Top bar ──────────────────────────────────────────────────────── */}
-      <header className="relative z-10 flex items-center justify-between gap-4 px-6 h-14 border-b border-[var(--border)] bg-[var(--bg)]/80 backdrop-blur-sm">
-        <div className="flex items-center gap-3">
-          <div className="brand-mark">G</div>
-          <div>
-            <h1 className="text-sm font-semibold text-[var(--fg-1)] leading-none">CodeGraph AI</h1>
-            <p className="text-[10px] text-[var(--fg-3)] mt-0.5 leading-none">Agentic Codebase Analyzer</p>
+      <header className="relative z-10 flex items-center justify-between gap-4 px-8 h-20 border-b border-[var(--border)] bg-[var(--bg)]/80 backdrop-blur-xl shadow-sm">
+        {/* Subtle animated top gradient line */}
+        <div className="absolute top-0 left-0 right-0 h-[1px] bg-gradient-to-r from-transparent via-blue-500/50 to-transparent opacity-50"></div>
+
+        <div className="flex items-center gap-4 min-w-0 group cursor-default">
+          <div className="relative flex-shrink-0">
+            {/* Pulsing glow behind the logo */}
+            <div className="absolute -inset-1.5 bg-gradient-to-tr from-blue-500 to-indigo-500 rounded-2xl blur-md opacity-20 group-hover:opacity-40 transition-opacity duration-700"></div>
+            <Image
+              src="/logo.png"
+              alt="CodeGraph AI"
+              width={44}
+              height={44}
+              className="relative h-11 w-11 rounded-[12px] object-cover ring-1 ring-[var(--border)] shadow-md transition-transform duration-500 group-hover:scale-[1.02]"
+              priority
+            />
+          </div>
+          <div className="min-w-0 flex flex-col justify-center">
+            <h1 className="text-[1.35rem] font-bold tracking-tight bg-gradient-to-br from-[var(--fg-1)] to-[var(--fg-3)] bg-clip-text text-transparent leading-none drop-shadow-sm pb-1">
+              CodeGraph AI
+            </h1>
+            <div className="flex items-center gap-2 mt-0.5">
+              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wider uppercase bg-blue-500/10 text-blue-500 ring-1 ring-inset ring-blue-500/20">
+                Agentic
+              </span>
+              <p className="text-[12px] font-medium text-[var(--fg-3)] leading-none tracking-wide">
+                Codebase Analyzer
+              </p>
+            </div>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          {/* Health */}
-          <div className="chip" title={`Neo4j: ${health.neo4j} · Qdrant: ${health.qdrant}`}>
-            <span className={`status-dot ${
-              health.status === "ok" ? "ok" :
-              health.status === "down" ? "error" : ""
-            }`} />
-            <span>
-              {health.status === "ok" ? "Services online" :
-               health.status === "down" ? "Services offline" : "Checking…"}
+        <div className="flex items-center gap-4 flex-shrink-0">
+          <ThemeToggle />
+          <div 
+            className="flex items-center gap-2.5 px-3.5 py-1.5 rounded-full border border-[var(--border)] bg-[var(--surface-1)] shadow-sm transition-colors hover:bg-[var(--surface-2)] cursor-help" 
+            title={`Neo4j: ${health.neo4j} · Qdrant: ${health.qdrant}`}
+          >
+            <div className="relative flex h-2.5 w-2.5">
+              {health.status === "ok" && (
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60"></span>
+              )}
+              <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${
+                health.status === "ok" ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" :
+                health.status === "down" ? "bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.6)]" : 
+                "bg-amber-500 animate-pulse"
+              }`}></span>
+            </div>
+            <span className="text-[11px] font-semibold text-[var(--fg-2)] tracking-wide">
+              {health.status === "ok" ? "Systems Active" :
+               health.status === "down" ? "Offline" : "Checking..."}
             </span>
           </div>
         </div>
@@ -205,7 +245,11 @@ export default function Home() {
         {/* Sidebar */}
         <aside className="w-80 flex-shrink-0 border-r border-[var(--border)] bg-[var(--surface-1)] flex flex-col overflow-y-auto">
           <div className="p-5 space-y-5">
-            <IngestPanel onDataChange={() => setGraphRefreshKey(k => k + 1)} />
+            <IngestPanel
+              onDataChange={() => setGraphRefreshKey((k) => k + 1)}
+              onCleared={handleIngestCleared}
+              resetKey={ingestUiReset}
+            />
 
             {/* Thread / session */}
             <div className="space-y-2">
@@ -238,12 +282,12 @@ export default function Home() {
                 <p className="text-[11px] text-[var(--fg-3)]">Loading thread…</p>
               )}
               {!threadStatus.loading && threadStatus.found && (
-                <p className="text-[11px] text-emerald-400/90">
+                <p className="text-[11px] text-success">
                   Thread loaded · {threadStatus.humanTurns} question{threadStatus.humanTurns === 1 ? "" : "s"} in history
                 </p>
               )}
               {threadStatus.error && (
-                <p className="text-[11px] text-amber-400/90">{threadStatus.error}</p>
+                <p className="text-[11px] text-warning">{threadStatus.error}</p>
               )}
             </div>
           </div>
@@ -312,11 +356,11 @@ export default function Home() {
 
               {error && (
                 <div className="flex items-start gap-2 rounded-[var(--radius)] border border-red-500/20 bg-red-500/5 px-3 py-2.5">
-                  <svg className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <svg className="w-4 h-4 text-danger flex-shrink-0 mt-0.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
                     <circle cx="8" cy="8" r="6.5"/>
                     <path d="M8 5v3.5M8 11v.5" strokeLinecap="round"/>
                   </svg>
-                  <p className="text-xs text-red-300 leading-relaxed">{error}</p>
+                  <p className="text-xs text-danger leading-relaxed">{error}</p>
                 </div>
               )}
             </div>
@@ -337,7 +381,10 @@ export default function Home() {
                   <h2 className="section-label">Knowledge Graph</h2>
                   <span className="h-px flex-1 bg-[var(--border)]" />
                 </div>
-                <GraphVisualization refreshKey={graphRefreshKey} />
+                <GraphVisualization
+                  refreshKey={graphRefreshKey}
+                  onCleared={handleIngestCleared}
+                />
               </section>
             </div>
           </div>
