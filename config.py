@@ -13,11 +13,12 @@ Usage:
 ==============================================================================
 """
 
-from pydantic_settings import BaseSettings
-from pydantic import Field
-
-
+import os
+from pathlib import Path
 from typing import Optional
+
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     """
@@ -107,12 +108,44 @@ class Settings(BaseSettings):
         description="Max self-correction loops before the synthesizer gives up.",
     )
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        # Allow OPENAI_API_KEY, NEO4J_URI, etc. as env var names
-        case_sensitive = False
+    model_config = SettingsConfigDict(
+        # Load .env only for local dev; Cloud Run must use service env vars.
+        env_file=".env" if Path(".env").is_file() else None,
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
 
 
 # ── Singleton ────────────────────────────────────────────────────────────────
 settings = Settings()
+
+
+def is_cloud_run() -> bool:
+    """True when running on Google Cloud Run (K_SERVICE is injected)."""
+    return bool(os.getenv("K_SERVICE"))
+
+
+def is_local_neo4j_uri(uri: str | None = None) -> bool:
+    u = (uri or settings.neo4j_uri).lower()
+    return "localhost" in u or "127.0.0.1" in u
+
+
+def validate_production_settings() -> list[str]:
+    """Return human-readable config errors (empty if OK)."""
+    errors: list[str] = []
+    if not is_cloud_run():
+        return errors
+
+    if is_local_neo4j_uri():
+        errors.append(
+            "NEO4J_URI is localhost. On Cloud Run set NEO4J_URI to your Neo4j Aura URL "
+            "(e.g. neo4j+s://xxxx.databases.neo4j.io) via --env-vars-file or the console."
+        )
+    if settings.qdrant_url is None and settings.qdrant_host in ("localhost", "127.0.0.1"):
+        errors.append(
+            "Qdrant points at localhost. Set QDRANT_URL and QDRANT_API_KEY for Qdrant Cloud."
+        )
+    if settings.google_api_key in ("", "placeholder"):
+        errors.append("GOOGLE_API_KEY is missing on Cloud Run.")
+    return errors

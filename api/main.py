@@ -45,7 +45,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from config import settings  # noqa: E402
+from config import settings, validate_production_settings  # noqa: E402
 from agent.graph import compile_graph, get_sqlite_checkpointer, GraphRAGState  # noqa: E402
 from ingestion.parser import run_ingestion  # noqa: E402
 from ingestion.github import clone_github_repository, parse_github_url  # noqa: E402
@@ -70,6 +70,22 @@ async def lifespan(app: FastAPI):
     - On startup: create SqliteSaver checkpointer, compile LangGraph.
     - On shutdown: close the checkpointer connection.
     """
+    config_errors = validate_production_settings()
+    if config_errors:
+        for msg in config_errors:
+            logger.error("Configuration: %s", msg)
+        logger.error(
+            "Neo4j URI in use: %s (username=%s)",
+            settings.neo4j_uri,
+            settings.neo4j_username,
+        )
+    else:
+        logger.info(
+            "Neo4j target: %s | Qdrant: %s",
+            settings.neo4j_uri.split("@")[-1] if "@" in settings.neo4j_uri else settings.neo4j_uri,
+            settings.qdrant_url or f"{settings.qdrant_host}:{settings.qdrant_port}",
+        )
+
     logger.info("Initialising SqliteSaver checkpointer...")
     try:
         checkpointer = get_sqlite_checkpointer("checkpoints.db")
