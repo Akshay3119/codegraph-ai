@@ -37,10 +37,17 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [graphRefreshKey, setGraphRefreshKey] = useState(0);
   const [ingestUiReset, setIngestUiReset] = useState(0);
+  const [ingestedThisSession, setIngestedThisSession] = useState(false);
 
   const handleIngestCleared = useCallback(() => {
     setGraphRefreshKey((k) => k + 1);
     setIngestUiReset((k) => k + 1);
+    setIngestedThisSession(false);
+  }, []);
+
+  const handleIngestComplete = useCallback(() => {
+    setGraphRefreshKey((k) => k + 1);
+    setIngestedThisSession(true);
   }, []);
   const [threadStatus, setThreadStatus] = useState<{
     loading: boolean;
@@ -246,7 +253,7 @@ export default function Home() {
         <aside className="w-80 flex-shrink-0 border-r border-[var(--border)] bg-[var(--surface-1)] flex flex-col overflow-y-auto">
           <div className="p-5 space-y-5">
             <IngestPanel
-              onDataChange={() => setGraphRefreshKey((k) => k + 1)}
+              onDataChange={handleIngestComplete}
               onCleared={handleIngestCleared}
               resetKey={ingestUiReset}
             />
@@ -384,6 +391,7 @@ export default function Home() {
                 <GraphVisualization
                   refreshKey={graphRefreshKey}
                   onCleared={handleIngestCleared}
+                  ingestedThisSession={ingestedThisSession}
                 />
               </section>
             </div>

@@ -37,6 +37,8 @@ interface GraphData {
 interface Props {
   refreshKey?: number;
   onCleared?: () => void;
+  /** True after a successful ingest in this browser tab — hides the stale-data banner. */
+  ingestedThisSession?: boolean;
 }
 
 const TYPE_COLORS: Record<string, string> = {
@@ -104,11 +106,17 @@ function NodeDetailsPanel({ node, onClose }: { node: GraphNode; onClose: () => v
   );
 }
 
-export default function GraphVisualization({ refreshKey = 0, onCleared }: Props) {
+export default function GraphVisualization({
+  refreshKey = 0,
+  onCleared,
+  ingestedThisSession = false,
+}: Props) {
   const { theme } = useTheme();
   const [clearing, setClearing] = useState(false);
   const [clearError, setClearError] = useState<string | null>(null);
   const [graphBg, setGraphBg] = useState("#0a0a0c");
+  const [showStaleBanner, setShowStaleBanner] = useState(false);
+  const initialGraphLoadDone = useRef(false);
 
   useEffect(() => {
     setGraphBg(themeColor("--graph-bg", "#0a0a0c"));
@@ -119,6 +127,18 @@ export default function GraphVisualization({ refreshKey = 0, onCleared }: Props)
     ([url]) => fetcher(url as string),
     { revalidateOnMount: true, revalidateOnFocus: false, dedupingInterval: 0 }
   );
+
+  useEffect(() => {
+    if (ingestedThisSession) setShowStaleBanner(false);
+  }, [ingestedThisSession]);
+
+  useEffect(() => {
+    if (isLoading || error || !data || initialGraphLoadDone.current) return;
+    initialGraphLoadDone.current = true;
+    if (data.nodes.length > 0 && !ingestedThisSession) {
+      setShowStaleBanner(true);
+    }
+  }, [data, isLoading, error, ingestedThisSession]);
 
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [hoveredNode, setHoveredNode] = useState<GraphNode | null>(null);
@@ -430,6 +450,7 @@ export default function GraphVisualization({ refreshKey = 0, onCleared }: Props)
       await clearIngestedData();
       setSelectedNode(null);
       await mutate({ nodes: [], links: [] }, { revalidate: true });
+      setShowStaleBanner(false);
       onCleared?.();
     } catch (err) {
       setClearError(err instanceof Error ? err.message : String(err));
@@ -440,35 +461,39 @@ export default function GraphVisualization({ refreshKey = 0, onCleared }: Props)
 
   return (
     <div className="flex flex-col gap-2.5">
-      <div className="banner-persist flex flex-wrap items-center justify-between gap-2 px-3 py-2.5">
-        <div className="flex items-start gap-2 min-w-0">
-          <svg className="w-4 h-4 text-warning flex-shrink-0 mt-0.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-            <circle cx="8" cy="8" r="6.5"/>
-            <path d="M8 5v1.5M8 10.5v.5" strokeLinecap="round"/>
-          </svg>
-          <p className="text-xs leading-relaxed">
-            <span className="banner-persist-title">Showing data from last ingest</span>
-            <span className="banner-persist-body"> — stored on the server until you clear it.</span>
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={() => void handleBannerClear()}
-          disabled={clearing}
-          className="btn-danger-subtle text-xs py-1.5 px-2.5 flex-shrink-0"
-        >
-          {clearing ? (
-            <svg className="animate-spin w-3.5 h-3.5" viewBox="0 0 24 24" fill="none">
-              <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" opacity="0.25"/>
-              <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" strokeWidth="3" strokeLinecap="round"/>
-            </svg>
-          ) : (
-            "Clear"
+      {showStaleBanner && (
+        <>
+          <div className="banner-persist flex flex-wrap items-center justify-between gap-2 px-3 py-2.5">
+            <div className="flex items-start gap-2 min-w-0">
+              <svg className="w-4 h-4 text-warning flex-shrink-0 mt-0.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <circle cx="8" cy="8" r="6.5"/>
+                <path d="M8 5v1.5M8 10.5v.5" strokeLinecap="round"/>
+              </svg>
+              <p className="text-xs leading-relaxed">
+                <span className="banner-persist-title">Showing data from a previous ingest</span>
+                <span className="banner-persist-body"> — stored on the server. Clear before ingesting a different repo.</span>
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => void handleBannerClear()}
+              disabled={clearing}
+              className="btn-danger-subtle text-xs py-1.5 px-2.5 flex-shrink-0"
+            >
+              {clearing ? (
+                <svg className="animate-spin w-3.5 h-3.5" viewBox="0 0 24 24" fill="none">
+                  <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" opacity="0.25"/>
+                  <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" strokeWidth="3" strokeLinecap="round"/>
+                </svg>
+              ) : (
+                "Clear"
+              )}
+            </button>
+          </div>
+          {clearError && (
+            <p className="text-[11px] text-danger px-1">{clearError}</p>
           )}
-        </button>
-      </div>
-      {clearError && (
-        <p className="text-[11px] text-danger px-1">{clearError}</p>
+        </>
       )}
 
       <div className="flex flex-wrap items-center gap-2">
