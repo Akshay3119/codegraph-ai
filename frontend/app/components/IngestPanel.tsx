@@ -3,8 +3,6 @@
 import { useEffect, useState } from "react";
 import { API, clearIngestedData } from "@/app/lib/api";
 
-type IngestMode = "github" | "local";
-
 interface IngestResult {
   entities_parsed: number;
   relationships_parsed: number;
@@ -22,15 +20,13 @@ export default function IngestPanel({
   onCleared?: () => void;
   resetKey?: number;
 }) {
-  const [mode, setMode] = useState<IngestMode>("github");
   const [githubUrl, setGithubUrl] = useState("");
-  const [path, setPath] = useState("./sample_codebase");
   const [loading, setLoading] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [result, setResult] = useState<IngestResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const canSubmit = mode === "github" ? githubUrl.trim().length > 0 : path.trim().length > 0;
+  const canSubmit = githubUrl.trim().length > 0;
 
   useEffect(() => {
     if (resetKey > 0) {
@@ -59,10 +55,7 @@ export default function IngestPanel({
     setResult(null);
     setError(null);
 
-    const body =
-      mode === "github"
-        ? { github_url: githubUrl.trim() }
-        : { codebase_path: path.trim() };
+    const body = { github_url: githubUrl.trim() };
 
     try {
       const res = await fetch(`${API}/ingest`, {
@@ -94,7 +87,7 @@ export default function IngestPanel({
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <label className="section-label">Source</label>
+        <label className="section-label">GitHub Source</label>
         {result && (
           <span className="chip chip-success">
             <span className="status-dot ok" /> Ingested
@@ -102,53 +95,19 @@ export default function IngestPanel({
         )}
       </div>
 
-      {/* Segmented mode toggle */}
-      <div className="segmented" role="tablist">
-        <button
-          role="tab"
-          aria-selected={mode === "github"}
-          onClick={() => setMode("github")}
-        >
-          <svg className="w-3.5 h-3.5 inline mr-1 -mt-0.5" viewBox="0 0 16 16" fill="currentColor">
-            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/>
-          </svg>
-          GitHub
-        </button>
-        <button
-          role="tab"
-          aria-selected={mode === "local"}
-          onClick={() => setMode("local")}
-        >
-          <svg className="w-3.5 h-3.5 inline mr-1 -mt-0.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-            <path d="M2 4a1 1 0 0 1 1-1h3l1.5 1.5H13a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4z"/>
-          </svg>
-          Local
-        </button>
-      </div>
-
       {/* Input */}
-      {mode === "github" ? (
-        <div className="space-y-1.5">
-          <input
-            type="url"
-            value={githubUrl}
-            onChange={(e) => setGithubUrl(e.target.value)}
-            placeholder="https://github.com/owner/repo"
-            className="input"
-          />
-          <p className="text-[11px] text-[var(--fg-4)]">
-            Public repos. Optional <span className="font-mono text-[var(--fg-3)]">/tree/branch</span>
-          </p>
-        </div>
-      ) : (
+      <div className="space-y-1.5">
         <input
-          type="text"
-          value={path}
-          onChange={(e) => setPath(e.target.value)}
-          placeholder="./sample_codebase"
-          className="input font-mono text-xs"
+          type="url"
+          value={githubUrl}
+          onChange={(e) => setGithubUrl(e.target.value)}
+          placeholder="https://github.com/owner/repo"
+          className="input"
         />
-      )}
+        <p className="text-[11px] text-[var(--fg-4)]">
+          Public repos. Optional <span className="font-mono text-[var(--fg-3)]">/tree/branch</span>
+        </p>
+      </div>
 
       {/* Actions */}
       <div className="flex gap-2">
@@ -163,7 +122,7 @@ export default function IngestPanel({
                 <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" opacity="0.25"/>
                 <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" strokeWidth="3" strokeLinecap="round"/>
               </svg>
-              {mode === "github" ? "Cloning…" : "Ingesting…"}
+              Cloning…
             </>
           ) : (
             <>
