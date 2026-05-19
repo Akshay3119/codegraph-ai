@@ -1,371 +1,278 @@
 # CodeGraph AI Codebase Analyzer
 
-> **Stateful multi-agent orchestration** combining Knowledge Graphs (Neo4j) + Vector Search (Qdrant) + LLM-powered reasoning (LangGraph) to answer complex questions about codebases — with a real-time streaming Next.js frontend.
+CodeGraph AI helps you ask natural-language questions about a codebase and get grounded answers using:
+
+- **Neo4j** for structural relationships (imports, defines, calls)
+- **Qdrant** for semantic similarity search over code/docstrings
+- **LangGraph** for multi-step reasoning and routing
+- **FastAPI + Next.js** for API + real-time streaming UI
+
+If you want full implementation details, see `AGENTIC_GRAPHRAG_COMPREHENSIVE_DOC.md`.
 
 ---
 
-## Architecture
+## Why This Project Exists
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                          Next.js Frontend (port 3000)                       │
-│                                                                             │
-│  ┌──────────────┐  ┌───────────────────┐  ┌──────────────────────────────┐ │
-│  │ IngestPanel   │  │ StreamingAnswer   │  │   GraphVisualization         │ │
-│  │ (POST /ingest)│  │ (SSE /analyze/    │  │   (react-force-graph-2d)    │ │
-│  │               │  │       stream)     │  │   (GET /graph)              │ │
-│  └──────────────┘  └───────────────────┘  └──────────────────────────────┘ │
-└─────────────────────────────────────────┬───────────────────────────────────┘
-                                          │ HTTP / SSE
-                                          ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                         FastAPI Server (port 8000)                           │
-│                                                                             │
-│   POST /analyze          ─ Synchronous agent invocation                     │
-│   POST /analyze/stream   ─ SSE streaming (node-by-node updates)             │
-│   GET  /analyze/stream   ─ Browser-friendly SSE (query params)              │
-│   GET  /history/{tid}    ─ Checkpoint history for a thread                  │
-│   GET  /graph            ─ Neo4j nodes + links for visualization            │
-│   POST /ingest           ─ Trigger codebase ingestion pipeline              │
-│   GET  /health           ─ Liveness check (Neo4j + Qdrant)                  │
-│                                                                             │
-│   Lifespan: SqliteSaver checkpointer + compiled LangGraph on startup        │
-└──────────────────────────────────────┬──────────────────────────────────────┘
-                                       │
-                                       ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                       LangGraph State Machine                               │
-│                                                                             │
-│   ┌──────────────┐                                                          │
-│   │  User Query   │                                                         │
-│   └──────┬───────┘                                                          │
-│          ▼                                                                  │
-│   ┌──────────────────┐                                                      │
-│   │  Query Analyzer   │  ← Classifies intent → {graph, vector, hybrid}      │
-│   └──────┬───────────┘                                                      │
-│          │                                                                  │
-│          ├── "graph"  ──► ┌──────────────────┐                              │
-│          │                │ Cypher Generator  │ → Neo4j                     │
-│          │                └──────┬───────────┘                              │
-│          │                       │ (if hybrid) ──► ┐                        │
-│          │                                         │                        │
-│          ├── "vector" ──► ┌──────────────────┐     │                        │
-│          │                │  Vector Searcher  │ ◄──┘                        │
-│          │                └──────┬───────────┘                              │
-│          │                       │                                          │
-│          └── "hybrid" ──► Cypher → Vector (sequential)                      │
-│                                  │                                          │
-│                                  ▼                                          │
-│                     ┌───────────────────────┐                               │
-│                     │  Synthesizer / Critic  │ ← Blends data, checks refs   │
-│                     └───────────┬───────────┘                               │
-│                                 │                                           │
-│                          ┌──────┴──────┐                                    │
-│                          │  Has code   │                                    │
-│                          │ citations?  │                                    │
-│                          └──────┬──────┘                                    │
-│                            YES  │  NO (& retries ≤ max_retrieval_retries)   │
-│                             ▼   ▼                                           │
-│                           END  Loop back to retrieval                       │
-│                                                                             │
-│   State: GraphRAGState (TypedDict) with add_messages reducer               │
-│   Checkpoint: SqliteSaver (checkpoints.db) for thread continuity            │
-└──────────────┬──────────────────────────────┬───────────────────────────────┘
-               │                              │
-               ▼                              ▼
-┌─────────────────────┐          ┌──────────────────────┐
-│       Neo4j 5       │          │       Qdrant         │
-│  Knowledge Graph    │          │     Vector DB        │
-│                     │          │                      │
-│  Nodes:             │          │  Collection:         │
-│   :Module           │          │   codebase_chunks    │
-│   :Class            │          │                      │
-│   :Function         │          │  Points per entity:  │
-│                     │          │   • docstring chunk   │
-│  Relationships:     │          │   • source code chunk │
-│   [:IMPORTS]        │          │                      │
-│   [:DEFINES]        │          │  Payload:            │
-│   [:CALLS]          │          │   qualified_name,    │
-│                     │          │   entity_type,       │
-│  Properties:        │          │   file_path,         │
-│   qualified_name    │          │   start_line,        │
-│   file_path         │          │   end_line,          │
-│   start_line        │          │   text               │
-│   end_line          │          │                      │
-│   docstring_preview │          │  Distance: Cosine    │
-│   entity_type       │          │  Dim: 1536 (default) │
-│   external (bool)   │          │                      │
-└─────────────────────┘          └──────────────────────┘
-```
+Traditional code search usually gives either:
+- structural truth (who calls what), or
+- semantic intent (what this code means),
+
+but rarely both in one answer. This project combines graph + vector retrieval so answers can be both accurate and context-aware.
 
 ---
 
-## Quick Start
+## System At A Glance
 
-### 1. Start Infrastructure
+```mermaid
+flowchart LR
+    U[User in Next.js UI] -->|POST /analyze or SSE /analyze/stream| API[FastAPI]
+    API --> LG[LangGraph State Machine]
+    LG --> N[(Neo4j Graph)]
+    LG --> Q[(Qdrant Vectors)]
+    N --> LG
+    Q --> LG
+    LG --> API
+    API --> U
+```
+
+### What each layer does
+
+- **Frontend**: Query input, streaming steps, graph visualization
+- **API**: Endpoints for query, stream, ingest, graph, health
+- **LangGraph**: Chooses graph/vector/hybrid strategy and synthesizes final answer
+- **Neo4j**: Stores modules/classes/functions and relationships
+- **Qdrant**: Stores embeddings for semantic retrieval
+
+---
+
+## How A Query Is Answered
+
+```mermaid
+flowchart TD
+    A[User Query] --> B[Query Analyzer]
+    B -->|graph| C[Generate Cypher + Run Neo4j]
+    B -->|vector| D[Embed + Search Qdrant]
+    B -->|hybrid| C --> D
+    C --> E[Synthesizer / Critic]
+    D --> E
+    E --> F{Has useful citations?}
+    F -->|Yes| G[Return Final Answer]
+    F -->|No and retries remain| H[Retry retrieval]
+    H --> C
+    H --> D
+```
+
+The agent can self-correct when retrieval is weak, then retry before responding.
+
+---
+
+## Why The Agent Matters
+
+Without an agent, you usually run multiple manual steps: graph query, semantic search, then hand-merge results.
+Here, the **LangGraph agent** does that orchestration for you.
+
+### What the agent adds
+
+- **Intent routing**: Decides whether the question needs graph, vector, or hybrid retrieval
+- **Tool orchestration**: Runs Neo4j and Qdrant in the right order for the question
+- **Evidence synthesis**: Produces one grounded answer instead of disconnected search outputs
+- **Self-correction loop**: Retries retrieval when evidence quality is low
+- **Stateful conversations**: Maintains continuity across questions with `thread_id`
+
+### Why this is important in practice
+
+- Better answers for architectural questions (dependencies, call flows, ownership)
+- Better answers for fuzzy questions (purpose, behavior, intent)
+- Fewer hallucinations because responses are tied to retrieved code context
+- Faster analysis loops for large repositories
+
+---
+
+## Quick Start (10 Minutes)
+
+### 1) Start infrastructure
+
 ```bash
 docker-compose up -d
 ```
-This spins up:
-- **Neo4j 5 Community** — `bolt://localhost:7687` (browser: `http://localhost:7474`, creds: `neo4j/graphrag2024`)
-- **Qdrant v1.12** — `http://localhost:6333` (dashboard: `http://localhost:6333/dashboard`)
 
-### 2. Install Python Dependencies
+Services:
+- Neo4j: `bolt://localhost:7687` (`http://localhost:7474`, `neo4j/graphrag2024`)
+- Qdrant: `http://localhost:6333` (`/dashboard`)
+
+### 2) Install backend deps
+
 ```bash
 python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 3. Configure
+### 3) Configure environment
+
 ```bash
 cp .env.example .env
-# Edit .env with your API keys
+# then edit .env (add OPENAI_API_KEY and others if needed)
 ```
 
-### 4. Ingest a Codebase
+### 4) Ingest a codebase
+
 ```bash
 python -m ingestion.parser ./sample_codebase
 ```
 
-### 5. Run the API Server
+### 5) Run backend API
+
 ```bash
 python -m api.main
-# Server at http://localhost:8000
-# Docs at http://localhost:8000/docs
 ```
 
-### 6. Run the Frontend
+Backend URLs:
+- API: `http://localhost:8000`
+- Docs: `http://localhost:8000/docs`
+
+### 6) Run frontend
+
 ```bash
 cd frontend
 npm install
 npm run dev
-# UI at http://localhost:3000
 ```
 
-### 7. Query
+Frontend URL:
+- `http://localhost:3000`
+
+### 7) Ask a question
+
 ```bash
-# Sync
 curl -X POST http://localhost:8000/analyze \
   -H "Content-Type: application/json" \
-  -d '{"query": "What classes are defined in the auth module and what methods do they have?"}'
+  -d '{"query":"What classes are defined in the auth module and what methods do they have?"}'
+```
 
-# SSE Streaming
-curl -N http://localhost:8000/analyze/stream?query=What+classes+are+in+auth%3F
+Streaming mode:
+
+```bash
+curl -N "http://localhost:8000/analyze/stream?query=What+classes+are+in+auth%3F"
 ```
 
 ---
 
-## Project Structure
+## GitHub Workflow (How To Use With Any Repo)
 
-```
-CodeGraph AI/
-├── docker-compose.yml              # Neo4j + Qdrant local infrastructure
-├── requirements.txt                # Python dependencies
-├── config.py                       # Pydantic-settings centralized config
-├── .env.example                    # Environment variable template
-│
-├── ingestion/                      # Stage 1: Data Engineering
-│   ├── __init__.py
-│   └── parser.py                   # AST parser → Neo4j + Qdrant ingestion
-│       ├── CodebaseASTVisitor      #   ast.NodeVisitor extracting entities & rels
-│       ├── Neo4jWriter             #   MERGE-based idempotent graph writes
-│       ├── QdrantWriter            #   Batch embedding + upsert
-│       └── run_ingestion()         #   Orchestrates Parse → Neo4j → Qdrant
-│
-├── agent/                          # Stage 2: LangGraph Agent
-│   ├── __init__.py                 #   Exports: compile_graph, get_compiled_graph
-│   └── graph.py                    #   LangGraph state machine (core engine)
-│       ├── GraphRAGState           #   TypedDict with add_messages reducer
-│       ├── query_analyzer_node     #   Classifies → graph/vector/hybrid
-│       ├── cypher_generation_node  #   LLM → Cypher → Neo4j execution
-│       ├── vector_search_node      #   Embed query → Qdrant search
-│       ├── synthesizer_node        #   Blends data, critic loop
-│       ├── route_after_analysis    #   Conditional edge: strategy routing
-│       ├── route_after_cypher      #   Conditional edge: hybrid chaining
-│       ├── route_after_synthesis   #   Conditional edge: self-correction
-│       └── build_graph / compile   #   StateGraph construction & Pregel compile
-│
-├── api/                            # Stage 3: Serving Layer
-│   ├── __init__.py
-│   └── main.py                     # FastAPI endpoints (7 routes)
-│       ├── POST /analyze           #   Synchronous agent invocation
-│       ├── POST /analyze/stream    #   SSE streaming (node-by-node)
-│       ├── GET  /analyze/stream    #   Browser-friendly SSE
-│       ├── GET  /history/{tid}     #   Checkpoint history
-│       ├── GET  /graph             #   Knowledge graph data for viz
-│       ├── POST /ingest            #   Trigger ingestion pipeline
-│       └── GET  /health            #   Liveness check
-│
-├── frontend/                       # Stage 4: Next.js UI
-│   ├── app/
-│   │   ├── layout.tsx              #   Root layout (Geist fonts, TailwindCSS 4)
-│   │   ├── page.tsx                #   Main page — query input + results
-│   │   ├── globals.css             #   Global styles
-│   │   └── components/
-│   │       ├── GraphVisualization.tsx   # react-force-graph-2d knowledge graph
-│   │       ├── StreamingAnswer.tsx      # SSE pipeline steps + markdown answer
-│   │       └── IngestPanel.tsx          # Codebase ingestion trigger
-│   └── package.json                #   Next.js 16, React 19, TailwindCSS 4
-│
-└── sample_codebase/                # Demo codebase for ingestion testing
-    ├── auth.py                     #   User, AuthService (token-based auth)
-    └── data_processing.py          #   DataLoader, transform_records, validate
+This project analyzes a **local codebase path**.  
+For GitHub repositories, the workflow is: **clone locally → ingest path → query**.
+
+```mermaid
+flowchart LR
+    GH[GitHub Repository URL] --> CL[git clone locally]
+    CL --> IN[Ingest local path]
+    IN --> ASK[Ask questions in UI/API]
 ```
 
----
+### Option A: Analyze a public GitHub repository
 
-## Tech Stack
+```bash
+git clone https://github.com/<owner>/<repo>.git
+python -m ingestion.parser "./<repo>"
+```
 
-| Layer | Technology | Purpose |
-|-------|-----------|---------|
-| **Frontend** | Next.js 16, React 19, TailwindCSS 4 | Real-time streaming UI with SSE |
-| **Graph Viz** | react-force-graph-2d | Interactive knowledge graph rendering |
-| **Markdown** | react-markdown | Rendered agent responses |
-| **Data Fetching** | SWR | Client-side graph data fetching with caching |
-| **Orchestration** | LangGraph ≥ 0.2 | Stateful multi-agent routing with conditional edges |
-| **Checkpointing** | langgraph-checkpoint-sqlite | Conversation persistence via SqliteSaver |
-| **Knowledge Graph** | Neo4j 5 Community | Structural relationships (IMPORTS, CALLS, DEFINES) |
-| **Vector DB** | Qdrant v1.12 | Semantic search over code chunks and docstrings |
-| **Backend** | FastAPI ≥ 0.115 | REST API + SSE streaming with Pydantic v2 validation |
-| **LLM** | langchain-openai | Provider-agnostic (swap to Groq/local via base_url) |
-| **Embeddings** | OpenAIEmbeddings | text-embedding-3-small (1536-dim, configurable) |
-| **Parsing** | Python `ast` | Zero-dependency structural code analysis |
-| **Config** | pydantic-settings | Typed settings from env vars / `.env` |
-| **Containerization** | Docker Compose | Neo4j + Qdrant local infrastructure |
+Then run backend + frontend and ask questions normally.
 
----
+### Option B: Analyze a private GitHub repository
 
-## Agent State Machine
+```bash
+git clone git@github.com:<owner>/<repo>.git
+# or use HTTPS if your token/credential helper is configured
+python -m ingestion.parser "./<repo>"
+```
 
-The core engine is a **LangGraph StateGraph** implementing the Supervisor multi-agent routing pattern.
+### Option C: Trigger ingestion via API after cloning
 
-### State Schema (`GraphRAGState`)
+```bash
+curl -X POST http://localhost:8000/ingest \
+  -H "Content-Type: application/json" \
+  -d '{"codebase_path":"./<repo>"}'
+```
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `messages` | `list[BaseMessage]` | Conversation history (append-only via `add_messages` reducer) |
-| `query_plan` | `dict` | Query Analyzer output: `{strategy, graph_query_hint, semantic_query}` |
-| `retrieved_graph_data` | `list[dict]` | Cypher query results from Neo4j |
-| `retrieved_vector_data` | `list[dict]` | Semantic search results from Qdrant |
-| `final_answer` | `str` | The synthesized response |
-| `retrieval_attempts` | `int` | Counter for the self-correction loop |
+### Example questions to ask after GitHub ingestion
 
-### Node Functions
-
-| Node | Responsibility |
-|------|---------------|
-| **Query Analyzer** | Classifies user intent → `graph`, `vector`, or `hybrid` strategy via LLM |
-| **Cypher Generator** | LLM generates Cypher from natural language → executes against Neo4j |
-| **Vector Searcher** | Embeds semantic query → top-10 Qdrant nearest-neighbor search |
-| **Synthesizer / Critic** | Blends both data sources into a cited markdown answer; triggers re-retrieval if `[INSUFFICIENT_DATA]` |
-
-### Routing Logic
-
-| Edge | Condition | Target |
-|------|-----------|--------|
-| After Analysis | `strategy == "graph"` | Cypher Generator |
-| After Analysis | `strategy == "vector"` | Vector Searcher |
-| After Analysis | `strategy == "hybrid"` | Cypher Generator → Vector Searcher (sequential) |
-| After Cypher | `strategy == "hybrid"` | Vector Searcher |
-| After Cypher | `strategy == "graph"` | Synthesizer |
-| After Synthesis | Answer has citations | END |
-| After Synthesis | `[INSUFFICIENT_DATA]` & retries ≤ max | Loop back to retrieval |
+- "Which modules import `X`, and what can break if I change it?"
+- "How does authentication flow from API routes to service classes?"
+- "Where is `foo()` called, and what are the downstream side effects?"
 
 ---
 
 ## Ingestion Pipeline
 
-The `ingestion/parser.py` module runs three stages:
-
-```
-     ┌─────────┐        ┌─────────┐        ┌─────────┐
-     │ Stage 1  │  ───►  │ Stage 2  │  ───►  │ Stage 3  │
-     │ AST      │        │ Neo4j    │        │ Qdrant   │
-     │ Parsing  │        │ Writes   │        │ Embeds   │
-     └─────────┘        └─────────┘        └─────────┘
+```mermaid
+flowchart LR
+    P[Parse Python AST] --> G[Write Entities + Edges to Neo4j]
+    G --> V[Chunk + Embed + Upsert to Qdrant]
 ```
 
-1. **AST Parsing** — `CodebaseASTVisitor` walks each `.py` file:
-   - Extracts **entities**: modules, classes, functions (with docstrings + source)
-   - Extracts **relationships**: IMPORTS, DEFINES, CALLS
-   - Handles async functions, chained attribute calls, star imports
+### Stage details
 
-2. **Neo4j Ingestion** — `Neo4jWriter`:
-   - MERGE-based idempotent writes (safe for re-runs)
-   - Creates uniqueness constraints on `qualified_name` per label
-   - Tags unresolved external dependencies with `external = true`
-
-3. **Qdrant Ingestion** — `QdrantWriter`:
-   - Each entity → up to 2 points (docstring chunk + source code chunk)
-   - Deterministic UUIDs (MD5-based) for idempotent upserts
-   - Batched embedding calls (configurable `batch_size`, default 64)
+- **AST parser** extracts modules, classes, functions, imports, calls, defines
+- **Neo4j writer** performs idempotent `MERGE` writes
+- **Qdrant writer** stores docstring/source chunks with deterministic IDs
 
 ---
 
-## API Endpoints
+## Project Layout
 
-| Method | Path | Description | Request | Response |
-|--------|------|-------------|---------|----------|
-| `POST` | `/analyze` | Synchronous agent query | `{query, thread_id?}` | `AnalyzeResponse` (answer, strategy, counts, latency) |
-| `POST` | `/analyze/stream` | SSE streaming query | `{query, thread_id?}` | `text/event-stream` — per-node updates, final `[DONE]` |
-| `GET` | `/analyze/stream` | Browser-friendly SSE | `?query=...&thread_id=...` | Same as POST stream |
-| `GET` | `/history/{thread_id}` | Checkpoint history | — | `{thread_id, checkpoints[], count}` |
-| `GET` | `/graph` | Knowledge graph data | `?limit=200` | `{nodes[], links[]}` for react-force-graph |
-| `POST` | `/ingest` | Trigger ingestion | `{codebase_path?}` | `IngestResponse` (entities, rels, latency) |
-| `GET` | `/health` | Liveness probe | — | `{status, neo4j, qdrant, version}` |
-
----
-
-## Frontend Components
-
-| Component | File | Description |
-|-----------|------|-------------|
-| **Home Page** | `app/page.tsx` | Query input (textarea + ⌘↵ submit), thread management, sidebar layout |
-| **StreamingAnswer** | `components/StreamingAnswer.tsx` | Displays pipeline step progress (emoji labels, color-coded nodes) + renders final answer as markdown |
-| **GraphVisualization** | `components/GraphVisualization.tsx` | Interactive force-directed graph (SWR data fetch, color-coded by type, node detail sidebar on click) |
-| **IngestPanel** | `components/IngestPanel.tsx` | Sidebar widget to trigger ingestion with custom path, shows entity/relationship counts |
+```text
+.
+├── ingestion/          # Parse code and ingest into Neo4j + Qdrant
+├── agent/              # LangGraph nodes, routing, synthesis logic
+├── api/                # FastAPI endpoints + SSE streaming
+├── frontend/           # Next.js app and graph visualization
+├── sample_codebase/    # Small demo project to test ingestion
+├── config.py           # Centralized settings from env
+└── docker-compose.yml  # Local Neo4j + Qdrant
+```
 
 ---
 
-## Configuration
+## Key API Endpoints
 
-All settings are centralized in `config.py` using `pydantic-settings` and read from environment variables or `.env`:
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `OPENAI_API_KEY` | `sk-placeholder` | LLM provider API key |
-| `OPENAI_API_BASE` | `None` | Override base URL for Groq/vLLM/Ollama |
-| `OPENAI_MODEL_NAME` | `gpt-4o-mini` | Chat model identifier |
-| `OPENAI_EMBEDDING_MODEL` | `text-embedding-3-small` | Embedding model |
-| `EMBEDDING_DIMENSION` | `1536` | Vector dimensionality |
-| `NEO4J_URI` | `bolt://localhost:7687` | Neo4j Bolt URI |
-| `NEO4J_USERNAME` | `neo4j` | Neo4j username |
-| `NEO4J_PASSWORD` | `graphrag2024` | Neo4j password |
-| `QDRANT_HOST` | `localhost` | Qdrant host |
-| `QDRANT_PORT` | `6333` | Qdrant REST port |
-| `QDRANT_COLLECTION_NAME` | `codebase_chunks` | Qdrant collection |
-| `TARGET_CODEBASE_PATH` | `./sample_codebase` | Default ingestion target |
-| `CHUNK_MAX_TOKENS` | `512` | Max token count per chunk |
-| `MAX_RETRIEVAL_RETRIES` | `2` | Self-correction loop limit |
+- `POST /analyze`: Synchronous answer
+- `POST /analyze/stream`: SSE stream (JSON body)
+- `GET /analyze/stream`: SSE stream (query params, browser-friendly)
+- `POST /ingest`: Trigger ingestion
+- `GET /graph`: Fetch graph nodes/links for visualization
+- `GET /history/{thread_id}`: Retrieve checkpoint history
+- `GET /health`: Health check
 
 ---
 
-## LLM Provider Swapping
+## Core Configuration
 
-The architecture is designed for zero-code provider swaps via environment variables:
+Set these in `.env`:
+
+- `OPENAI_API_KEY`
+- `OPENAI_MODEL_NAME` (default: `gpt-4o-mini`)
+- `OPENAI_EMBEDDING_MODEL` (default: `text-embedding-3-small`)
+- `NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD`
+- `QDRANT_HOST`, `QDRANT_PORT`, `QDRANT_COLLECTION_NAME`
+- `TARGET_CODEBASE_PATH`
+- `MAX_RETRIEVAL_RETRIES`
+
+---
+
+## LLM Provider Swaps (No Code Changes)
 
 ```bash
 # OpenAI (default)
 OPENAI_API_KEY=sk-...
 OPENAI_MODEL_NAME=gpt-4o-mini
 
-# Groq
+# Groq-compatible endpoint
 OPENAI_API_BASE=https://api.groq.com/openai/v1
 OPENAI_API_KEY=gsk_...
 OPENAI_MODEL_NAME=llama3-70b-8192
 
-# Local (vLLM / Ollama)
+# Local vLLM/Ollama-compatible endpoint
 OPENAI_API_BASE=http://localhost:8080/v1
 OPENAI_API_KEY=dummy
 OPENAI_MODEL_NAME=meta-llama/Llama-3-8b
@@ -373,16 +280,17 @@ OPENAI_MODEL_NAME=meta-llama/Llama-3-8b
 
 ---
 
-## Design Decisions
+## Troubleshooting
 
-| Decision | Rationale |
-|----------|-----------|
-| **TypedDict state** (not Pydantic) | LangGraph convention — mutable dict merging per node |
-| **Pure function nodes** | `(state) → partial update` — composable, testable, no side-effect coupling |
-| **MERGE-based Neo4j writes** | Idempotent ingestion — safe for repeated re-runs |
-| **Deterministic Qdrant IDs** | MD5-based UUIDs prevent duplicate points on re-ingestion |
-| **Conditional edges** (not hardcoded chains) | Flexible routing; strategy is decided at runtime by the LLM |
-| **SqliteSaver checkpointing** | Conversation continuity across requests via `thread_id` |
-| **SSE streaming** | Real-time per-node pipeline visibility in the frontend |
-| **Provider-agnostic LLM** | Single env var swap to move between OpenAI, Groq, or local models |
-| **`from __future__ import annotations`** | Enables `str | None` union syntax across Python 3.9+ |
+- **No answers / weak answers**: run ingestion again and verify Neo4j + Qdrant are healthy.
+- **Frontend does not stream**: ensure backend is running on `:8000` and CORS/network settings are correct.
+- **Neo4j auth errors**: verify credentials in `.env` match `docker-compose.yml`.
+- **Embedding errors**: confirm `OPENAI_API_KEY` and provider base URL.
+
+---
+
+## What To Read Next
+
+- `AGENTIC_GRAPHRAG_COMPREHENSIVE_DOC.md` for deep architecture and design rationale
+- `agent/graph.py` for orchestration logic
+- `ingestion/parser.py` for AST extraction and storage flow
