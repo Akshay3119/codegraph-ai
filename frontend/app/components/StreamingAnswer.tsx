@@ -147,8 +147,8 @@ export default function StreamingAnswer({ events, isStreaming, finalAnswer }: St
               </svg>
               <span className="text-xs font-semibold text-[var(--fg-2)]">Thinking</span>
               {isStreaming && (
-                <span className="chip" style={{ background: "rgba(99,102,241,0.1)", borderColor: "rgba(99,102,241,0.3)", color: "#a5b4fc" }}>
-                  <span className="status-dot" style={{ background: "#a5b4fc", boxShadow: "0 0 8px #a5b4fc" }} />
+                <span className="chip">
+                  <span className="status-dot ok" />
                   live
                 </span>
               )}

@@ -541,7 +541,15 @@ export default function GraphVisualization({
           <button
             onClick={() => setShowLabels(v => !v)}
             className="chip transition-all"
-            style={showLabels ? { borderColor: "#6366f1AA", color: "#a5b4fc", background: "rgba(99,102,241,0.14)" } : {}}
+            style={
+              showLabels
+                ? {
+                    borderColor: "var(--border-strong)",
+                    color: "var(--fg-1)",
+                    background: "var(--surface-3)",
+                  }
+                : {}
+            }
           >
             Labels {showLabels ? "on" : "off"}
           </button>
