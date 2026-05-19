@@ -58,7 +58,8 @@ const RELATION_COLORS: Record<string, string> = {
 };
 
 const GRAPH_URL = `${API}/graph?limit=300`;
-const GRAPH_HEIGHT = 460;
+const GRAPH_HEIGHT_DESKTOP = 460;
+const GRAPH_HEIGHT_MOBILE = 340;
 
 const fetcher = async (url: string): Promise<GraphData> => {
   const r = await fetch(url);
@@ -165,6 +166,8 @@ export default function GraphVisualization({
   const zoomToFit = useCallback(() => {
     fgRef.current?.zoomToFit(400, 48);
   }, []);
+
+  const graphHeight = graphWidth > 0 && graphWidth < 640 ? GRAPH_HEIGHT_MOBILE : GRAPH_HEIGHT_DESKTOP;
 
   const handleEngineStop = useCallback(() => {
     if (!initialLayoutDone.current) {
@@ -569,7 +572,7 @@ export default function GraphVisualization({
         </div>
       </div>
 
-      <div className="card relative w-full overflow-hidden" style={{ height: GRAPH_HEIGHT, background: "var(--graph-bg)" }}>
+      <div className="card relative w-full overflow-hidden" style={{ height: graphHeight, background: "var(--graph-bg)" }}>
         <div ref={canvasHostRef} className="relative w-full h-full">
           <div className="absolute top-3 left-3 z-10 flex gap-1.5 pointer-events-none">
             <span className="chip" style={{ background: "var(--graph-chip-bg)", backdropFilter: "blur(8px)" }}>
@@ -591,7 +594,7 @@ export default function GraphVisualization({
           </div>
 
           <div
-            className="absolute bottom-3 left-3 z-10 flex gap-3 px-2.5 py-1.5 rounded-[var(--radius)] pointer-events-none"
+            className="absolute bottom-3 left-3 z-10 flex flex-wrap gap-2 px-2.5 py-1.5 rounded-[var(--radius)] pointer-events-none max-w-[calc(100%-1.5rem)]"
             style={{ background: "var(--graph-chip-bg)", backdropFilter: "blur(8px)", border: "1px solid var(--border)" }}
           >
             {Object.entries(RELATION_COLORS).map(([type, color]) => (
@@ -606,7 +609,7 @@ export default function GraphVisualization({
             // @ts-expect-error ref typing mismatch
             ref={fgRef}
             width={graphWidth || 800}
-            height={GRAPH_HEIGHT}
+            height={graphHeight}
             graphData={graphData}
             backgroundColor={graphBg}
             nodeCanvasObject={paintNode}

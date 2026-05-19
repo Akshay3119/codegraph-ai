@@ -189,29 +189,79 @@ export default function Home() {
   const hasResults =
     events.length > 0 || isStreaming || Boolean(finalAnswer) || Boolean(loadedFinalAnswer);
 
+  const sidebarContent = (
+    <>
+      <IngestPanel
+        onDataChange={handleIngestComplete}
+        onCleared={handleIngestCleared}
+        resetKey={ingestUiReset}
+      />
+
+      {/* Thread / session */}
+      <div className="space-y-2">
+        <label className="section-label block">Conversation</label>
+        <input
+          type="text"
+          value={threadId}
+          onChange={(e) => {
+            setThreadId(e.target.value);
+            setThreadStatus({ loading: false, found: false, humanTurns: 0, error: null });
+            setLoadedFinalAnswer("");
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              void loadThread();
+            }
+          }}
+          onBlur={() => {
+            if (threadId.trim()) void loadThread();
+          }}
+          placeholder="Paste thread ID, then press Enter"
+          className="input font-mono text-xs"
+        />
+        <p className="text-[11px] text-[var(--fg-4)] leading-relaxed">
+          Paste a thread ID and press <kbd className="px-1 py-0.5 rounded bg-[var(--surface-3)] border border-[var(--border)] font-mono text-[10px]">Enter</kbd> to load it.
+          Then ask a follow-up in the query box and click Analyze (or ⌘↵).
+        </p>
+        {threadStatus.loading && (
+          <p className="text-[11px] text-[var(--fg-3)]">Loading thread…</p>
+        )}
+        {!threadStatus.loading && threadStatus.found && (
+          <p className="text-[11px] text-success">
+            Thread loaded · {threadStatus.humanTurns} question{threadStatus.humanTurns === 1 ? "" : "s"} in history
+          </p>
+        )}
+        {threadStatus.error && (
+          <p className="text-[11px] text-warning">{threadStatus.error}</p>
+        )}
+      </div>
+    </>
+  );
+
   return (
-    <div className="relative min-h-screen flex flex-col">
+    <div className="relative min-h-screen w-full overflow-x-hidden flex flex-col">
       {/* ── Top bar ──────────────────────────────────────────────────────── */}
-      <header className="relative z-10 flex items-center justify-between gap-4 px-8 h-20 border-b border-[var(--border)] bg-[var(--bg)]/80 backdrop-blur-xl shadow-sm">
+      <header className="relative z-10 w-full flex flex-wrap md:flex-nowrap items-center justify-between gap-3 md:gap-4 px-4 sm:px-6 md:px-8 py-3 md:py-0 md:h-20 border-b border-[var(--border)] bg-[var(--bg)]/80 backdrop-blur-xl shadow-sm">
         {/* Subtle animated top gradient line */}
         <div className="absolute top-0 left-0 right-0 h-px bg-[var(--border-strong)] opacity-60" />
 
-        <div className="flex items-center gap-4 min-w-0 group cursor-default">
+        <div className="flex items-center gap-3 md:gap-4 min-w-0 group cursor-default">
           <div className="relative flex-shrink-0">
             <Image
               src="/logo.png"
               alt="CodeGraph AI"
-              width={44}
-              height={44}
-              className="relative h-11 w-11 rounded-[12px] object-cover ring-1 ring-[var(--border)] shadow-md transition-transform duration-500 group-hover:scale-[1.02]"
+              width={40}
+              height={40}
+              className="relative h-10 w-10 md:h-11 md:w-11 rounded-[12px] object-cover ring-1 ring-[var(--border)] shadow-md transition-transform duration-500 group-hover:scale-[1.02]"
               priority
             />
           </div>
           <div className="min-w-0 flex flex-col justify-center">
-            <h1 className="text-[1.35rem] font-bold tracking-tight bg-gradient-to-br from-[var(--fg-1)] to-[var(--fg-3)] bg-clip-text text-transparent leading-none drop-shadow-sm pb-1">
+            <h1 className="text-[1.1rem] sm:text-[1.2rem] md:text-[1.35rem] font-bold tracking-tight bg-gradient-to-br from-[var(--fg-1)] to-[var(--fg-3)] bg-clip-text text-transparent leading-none drop-shadow-sm pb-1">
               CodeGraph AI
             </h1>
-            <div className="flex items-center gap-2 mt-0.5">
+            <div className="hidden sm:flex items-center gap-2 mt-0.5">
               <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wider uppercase bg-[var(--surface-3)] text-[var(--fg-3)] ring-1 ring-inset ring-[var(--border)]">
                 Agentic
               </span>
@@ -222,7 +272,7 @@ export default function Home() {
           </div>
         </div>
 
-        <div className="flex items-center gap-3 flex-shrink-0">
+        <div className="ml-auto flex items-center justify-end flex-wrap gap-2 sm:gap-3 min-w-0">
           <a
             href={SOURCE_REPO_URL}
             target="_blank"
@@ -237,7 +287,7 @@ export default function Home() {
           </a>
           <ThemeToggle />
           <div 
-            className="flex items-center gap-2.5 px-3.5 py-1.5 rounded-full border border-[var(--border)] bg-[var(--surface-1)] shadow-sm transition-colors hover:bg-[var(--surface-2)] cursor-help" 
+            className="flex items-center gap-2 px-2.5 sm:px-3.5 py-1.5 rounded-full border border-[var(--border)] bg-[var(--surface-1)] shadow-sm transition-colors hover:bg-[var(--surface-2)] cursor-help" 
             title={`Neo4j: ${health.neo4j} · Qdrant: ${health.qdrant}`}
           >
             <div className="relative flex h-2.5 w-2.5">
@@ -250,7 +300,7 @@ export default function Home() {
                 "bg-amber-500 animate-pulse"
               }`}></span>
             </div>
-            <span className="text-[11px] font-semibold text-[var(--fg-2)] tracking-wide">
+            <span className="hidden sm:inline text-[11px] font-semibold text-[var(--fg-2)] tracking-wide">
               {health.status === "ok" ? "Systems Active" :
                health.status === "down" ? "Offline" : "Checking..."}
             </span>
@@ -259,62 +309,29 @@ export default function Home() {
       </header>
 
       {/* ── Body ────────────────────────────────────────────────────────── */}
-      <div className="relative z-10 flex flex-1 min-h-0">
+      <div className="relative z-10 w-full flex flex-col md:flex-row flex-1 min-h-0">
         {/* Sidebar */}
-        <aside className="w-80 flex-shrink-0 border-r border-[var(--border)] bg-[var(--surface-1)] flex flex-col overflow-y-auto">
-          <div className="p-5 space-y-5">
-            <IngestPanel
-              onDataChange={handleIngestComplete}
-              onCleared={handleIngestCleared}
-              resetKey={ingestUiReset}
-            />
-
-            {/* Thread / session */}
-            <div className="space-y-2">
-              <label className="section-label block">Conversation</label>
-              <input
-                type="text"
-                value={threadId}
-                onChange={(e) => {
-                  setThreadId(e.target.value);
-                  setThreadStatus({ loading: false, found: false, humanTurns: 0, error: null });
-                  setLoadedFinalAnswer("");
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    void loadThread();
-                  }
-                }}
-                onBlur={() => {
-                  if (threadId.trim()) void loadThread();
-                }}
-                placeholder="Paste thread ID, then press Enter"
-                className="input font-mono text-xs"
-              />
-              <p className="text-[11px] text-[var(--fg-4)] leading-relaxed">
-                Paste a thread ID and press <kbd className="px-1 py-0.5 rounded bg-[var(--surface-3)] border border-[var(--border)] font-mono text-[10px]">Enter</kbd> to load it.
-                Then ask a follow-up in the query box and click Analyze (or ⌘↵).
-              </p>
-              {threadStatus.loading && (
-                <p className="text-[11px] text-[var(--fg-3)]">Loading thread…</p>
-              )}
-              {!threadStatus.loading && threadStatus.found && (
-                <p className="text-[11px] text-success">
-                  Thread loaded · {threadStatus.humanTurns} question{threadStatus.humanTurns === 1 ? "" : "s"} in history
-                </p>
-              )}
-              {threadStatus.error && (
-                <p className="text-[11px] text-warning">{threadStatus.error}</p>
-              )}
-            </div>
+        <aside className="hidden md:flex md:w-80 md:flex-shrink-0 border-r border-[var(--border)] bg-[var(--surface-1)] flex-col overflow-y-auto">
+          <div className="p-4 sm:p-5 space-y-5">
+            {sidebarContent}
           </div>
         </aside>
 
         {/* Main */}
-        <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        <main className="w-full flex-1 flex flex-col min-w-0 overflow-hidden">
+          <div className="md:hidden px-4 sm:px-6 pt-4 border-b border-[var(--border)]">
+            <details className="card overflow-hidden">
+              <summary className="list-none cursor-pointer select-none px-4 py-3 text-xs font-semibold text-[var(--fg-2)] tracking-wide">
+                Data source and conversation
+              </summary>
+              <div className="p-4 space-y-5 border-t border-[var(--border)]">
+                {sidebarContent}
+              </div>
+            </details>
+          </div>
+
           {/* Query area */}
-          <div className="px-6 pt-6 pb-4 border-b border-[var(--border)]">
+          <div className="px-4 sm:px-6 pt-4 sm:pt-6 pb-4 border-b border-[var(--border)]">
             <div className="max-w-4xl mx-auto w-full space-y-3">
               <div className="card p-1 focus-within:border-[var(--accent)] focus-within:shadow-[0_0_0_3px_var(--accent-soft)] transition-shadow">
                 <textarea
@@ -327,15 +344,15 @@ export default function Home() {
                   rows={2}
                   className="w-full px-3 py-2.5 text-sm text-[var(--fg-1)] placeholder:text-[var(--fg-4)] bg-transparent resize-none focus:outline-none leading-relaxed"
                 />
-                <div className="flex items-center justify-between gap-3 px-3 pb-2">
-                  <span className="text-[11px] text-[var(--fg-4)]">
+                <div className="mt-1 flex flex-col gap-2 px-3 pb-3 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+                  <span className="text-[11px] text-[var(--fg-4)] leading-relaxed">
                     Press <kbd className="px-1.5 py-0.5 rounded bg-[var(--surface-3)] border border-[var(--border)] font-mono text-[10px]">⌘</kbd> +
                     <kbd className="px-1.5 py-0.5 rounded bg-[var(--surface-3)] border border-[var(--border)] font-mono text-[10px] ml-1">↵</kbd> to submit
                   </span>
                   <button
                     onClick={() => handleAnalyze()}
                     disabled={!query.trim() || isStreaming}
-                    className="btn-primary"
+                    className="btn-primary w-full sm:w-auto"
                   >
                     {isStreaming ? (
                       <>
@@ -386,7 +403,7 @@ export default function Home() {
 
           {/* Results */}
           <div className="flex-1 overflow-y-auto">
-            <div className="max-w-4xl mx-auto w-full px-6 py-6 space-y-6">
+            <div className="max-w-4xl mx-auto w-full px-4 sm:px-6 py-4 sm:py-6 space-y-6">
               <StreamingAnswer
                 events={events}
                 isStreaming={isStreaming}
