@@ -23,7 +23,16 @@ Fully automated. The VM auto-installs Docker and boots Neo4j on first boot.
 
 > **Free-tier rules:** `e2-micro` is always-free only in `us-west1`,
 > `us-central1`, `us-east1`, and only **one** such instance per billing account.
-> It has ~1 GB RAM, so Neo4j memory is kept small (fine for demo-sized graphs).
+> It has ~1 GB RAM, so the startup script keeps Neo4j memory small (256m heap +
+> 256m pagecache), **adds a 2 GB swap file**, and omits APOC. Without these,
+> Neo4j exhausts the 1 GB and the VM (including sshd) thrashes. Override memory
+> via instance metadata `neo4j-heap` / `neo4j-pagecache` on larger machines.
+>
+> **First boot is slow:** on e2-micro, Docker install + Neo4j startup takes
+> ~3–4 minutes before Bolt accepts connections. A `connection refused` on 7687
+> during that window is expected; wait and re-check.
+>
+> For anything beyond a demo, prefer Option B (Oracle Ampere, up to 24 GB free).
 
 ```bash
 cd deploy/neo4j

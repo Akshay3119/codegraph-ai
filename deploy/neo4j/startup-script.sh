@@ -29,6 +29,25 @@ if [ -z "${NEO4J_PASSWORD}" ]; then
 fi
 [ -z "${EXTERNAL_IP}" ] && EXTERNAL_IP="localhost"
 
+# Memory settings (overridable via instance metadata; conservative defaults so
+# Neo4j fits a ~1 GB e2-micro free-tier VM).
+NEO4J_HEAP="$(curl -fs -H "$HDR" "$METADATA/instance/attributes/neo4j-heap" || true)"
+NEO4J_PAGECACHE="$(curl -fs -H "$HDR" "$METADATA/instance/attributes/neo4j-pagecache" || true)"
+[ -z "${NEO4J_HEAP}" ] && NEO4J_HEAP="256m"
+[ -z "${NEO4J_PAGECACHE}" ] && NEO4J_PAGECACHE="256m"
+
+# ── Swap file (idempotent) ────────────────────────────────────────────────────
+# A swap file is essential on tiny VMs: it absorbs JVM/page-cache spikes so the
+# OOM killer doesn't take down Neo4j (or sshd) under load.
+if ! swapon --show | grep -q '/swapfile'; then
+  LOG "Creating 2G swap file..."
+  fallocate -l 2G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=2048
+  chmod 600 /swapfile
+  mkswap /swapfile
+  swapon /swapfile
+  grep -q '/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+fi
+
 # ── Install Docker Engine + compose plugin (idempotent) ───────────────────────
 if ! command -v docker >/dev/null 2>&1; then
   LOG "Installing Docker..."
@@ -57,9 +76,9 @@ mkdir -p "$APP_DIR"
 cat > "$APP_DIR/neo4j.env" <<EOF
 NEO4J_PASSWORD=${NEO4J_PASSWORD}
 NEO4J_ADVERTISED_HOST=${EXTERNAL_IP}
-NEO4J_HEAP_INITIAL=512m
-NEO4J_HEAP_MAX=512m
-NEO4J_PAGECACHE=512m
+NEO4J_HEAP_INITIAL=${NEO4J_HEAP}
+NEO4J_HEAP_MAX=${NEO4J_HEAP}
+NEO4J_PAGECACHE=${NEO4J_PAGECACHE}
 EOF
 chmod 600 "$APP_DIR/neo4j.env"
 
@@ -74,7 +93,7 @@ services:
       - "7687:7687"
     environment:
       NEO4J_AUTH: "neo4j/${NEO4J_PASSWORD:?Set NEO4J_PASSWORD}"
-      NEO4J_PLUGINS: '["apoc"]'
+      # APOC omitted by default to keep the footprint small on tiny free VMs.
       NEO4J_server_default__listen__address: "0.0.0.0"
       NEO4J_server_default__advertised__address: "${NEO4J_ADVERTISED_HOST:-localhost}"
       NEO4J_server_bolt_advertised__address: "${NEO4J_ADVERTISED_HOST:-localhost}:7687"
