@@ -140,7 +140,7 @@ flowchart LR
 ### Stage A: Data ingestion (one-time per codebase)
 
 1. User ingests codebase (local path or GitHub URL)
-2. Parser walks Python files with AST
+2. Parser walks supported source files with Tree-sitter (multi-language)
 3. Entities/relationships written into Neo4j
 4. Docstring/source chunks embedded and written to Qdrant
 
@@ -149,7 +149,7 @@ flowchart LR
 ```mermaid
 flowchart LR
     A[Codebase Path or GitHub URL]
-    B[Parse Python AST<br/>CodebaseASTVisitor]
+    B[Parse with Tree-sitter<br/>multi-language walker]
     C[Extract Entities<br/>Module/Class/Function]
     D[Extract Relationships<br/>IMPORTS/DEFINES/CALLS]
     E[Neo4jWriter<br/>MERGE nodes + edges]
@@ -207,24 +207,45 @@ sequenceDiagram
 
 ## 5) Ingestion Pipeline Deep Dive
 
-File: `ingestion/parser.py`
+Files: `ingestion/treesitter_parser.py` (parsing) and `ingestion/parser.py` (storage).
 
-### 5.1 AST Extraction (`CodebaseASTVisitor`)
+### 5.1 Multi-Language Extraction (Tree-sitter)
 
-For every `.py` file:
+Parsing is handled by a **Tree-sitter** based walker (`ingestion/treesitter_parser.py`),
+which replaced the original Python-only `ast` extractor. Tree-sitter produces a
+concrete syntax tree for many languages, so the same pipeline now works on
+polyglot codebases.
+
+Supported out of the box (via `tree-sitter-language-pack`): Python,
+JavaScript/JSX, TypeScript/TSX, Java, Go, Rust, C, C++, C#, Ruby, PHP. Adding a
+language is mostly a matter of registering a small `LanguageSpec`
+(which node types are classes / functions / imports / calls) — no new traversal
+code is required.
+
+For every supported source file:
 
 - Creates a `module` entity
-- Extracts `class` and `function` entities
+- Extracts `class` and `function` entities (interfaces, structs, enums, traits,
+  methods, etc. are mapped to the coarse `class`/`function` types and keep a
+  finer `kind` label such as `interface` or `struct`)
 - Captures:
-  - qualified name
+  - qualified name (scope-aware, e.g. `pkg.module.Class.method`)
   - file path
   - start/end lines
-  - docstring
+  - docstring (Python docstrings; empty for languages without an inline doc
+    convention)
   - source snippet
+  - language and kind
 - Extracts relationships:
   - `IMPORTS`
   - `DEFINES`
   - `CALLS`
+
+A single generic tree walker maintains a scope stack to build dotted qualified
+names. Grammars that are not installed are skipped gracefully rather than failing
+the whole ingest. The public surface (`ExtractedEntity`,
+`ExtractedRelationship`, `ParseResult`, `parse_codebase`) is unchanged, so the
+Neo4j/Qdrant writers, agent, and frontend keep working without modification.
 
 This transforms source code into a **structured code graph representation**.
 
@@ -599,7 +620,9 @@ Likely route:
 
 ## 14) Current Scope and Limitations
 
-1. **Language support**: ingestion currently parses Python (`*.py`) only.
+1. **Language support**: ingestion now parses many languages via Tree-sitter
+   (Python, JS/TS, Java, Go, Rust, C/C++, C#, Ruby, PHP). Call/import resolution
+   is name-based (not type-aware), and non-Python docstrings are not extracted.
 2. **Cypher safety/quality**: LLM-generated Cypher can fail or be suboptimal.
 3. **No formal test suite**: dependencies include pytest, but repository has no substantive automated tests yet.
 4. **Answer quality bound by retrieval quality**: poor chunking or sparse graph data limits response quality.
@@ -612,7 +635,7 @@ Likely route:
 If you want to learn agentic systems from this project:
 
 1. Start with `README.md` for architecture orientation.
-2. Read `ingestion/parser.py` to understand data grounding.
+2. Read `ingestion/treesitter_parser.py` (multi-language extraction) and `ingestion/parser.py` (storage) to understand data grounding.
 3. Read `agent/graph.py` to understand state-machine orchestration.
 4. Read `agent/llm.py` to understand provider reliability/fallback.
 5. Read `api/main.py` to understand serving + SSE + memory threads.

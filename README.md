@@ -2,6 +2,7 @@
 
 CodeGraph AI helps you ask natural-language questions about a codebase and get grounded answers using:
 
+- **Tree-sitter** for multi-language parsing (Python, JS/TS, Java, Go, Rust, C/C++, C#, Ruby, PHP, ...)
 - **Neo4j** for structural relationships (imports, defines, calls)
 - **Qdrant** for semantic similarity search over code/docstrings
 - **LangGraph** for multi-step reasoning and routing
@@ -207,13 +208,13 @@ curl -X POST http://localhost:8000/ingest \
 
 ```mermaid
 flowchart LR
-    P[Parse Python AST] --> G[Write Entities + Edges to Neo4j]
+    P[Parse with Tree-sitter<br/>multi-language] --> G[Write Entities + Edges to Neo4j]
     G --> V[Chunk + Embed + Upsert to Qdrant]
 ```
 
 ### Stage details
 
-- **AST parser** extracts modules, classes, functions, imports, calls, defines
+- **Tree-sitter parser** (`ingestion/treesitter_parser.py`) extracts modules, classes, functions, imports, calls, defines across many languages
 - **Neo4j writer** performs idempotent `MERGE` writes
 - **Qdrant writer** stores docstring/source chunks with deterministic IDs
 
@@ -293,4 +294,4 @@ OPENAI_MODEL_NAME=meta-llama/Llama-3-8b
 
 - `AGENTIC_GRAPHRAG_COMPREHENSIVE_DOC.md` for deep architecture and design rationale
 - `agent/graph.py` for orchestration logic
-- `ingestion/parser.py` for AST extraction and storage flow
+- `ingestion/treesitter_parser.py` for multi-language Tree-sitter extraction, and `ingestion/parser.py` for the Neo4j/Qdrant storage flow

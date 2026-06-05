@@ -6,6 +6,9 @@ __pycache__/
 cloudrun.env
 gcp-sa-key.json
 
+# Self-hosted Neo4j secrets (deploy/)
+deploy/neo4j/neo4j.env
+
 # IDE
 .vscode/
 .idea/

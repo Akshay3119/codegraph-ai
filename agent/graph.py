@@ -241,7 +241,9 @@ You are a Cypher query generator for a Neo4j codebase knowledge graph.
 
 The graph schema:
   Node Labels: Module, Class, Function (all have property `qualified_name`)
-  Node Properties: qualified_name, file_path, start_line, end_line, docstring_preview, entity_type
+  Node Properties: qualified_name, file_path, start_line, end_line, docstring_preview, entity_type, language, kind
+    - `language` is the source language (e.g. "python", "typescript", "java", "go", "rust").
+    - `kind` is a finer-grained type (e.g. "interface", "struct", "enum", "method") mapped onto the coarse labels above.
   Relationship Types: IMPORTS, DEFINES, CALLS
   External nodes may have property `external = true`.
 

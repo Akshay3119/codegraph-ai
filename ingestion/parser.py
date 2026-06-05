@@ -7,9 +7,11 @@ Codebase Ingestion Pipeline — parser.py
 This module is the **data engineering backbone** of the CodeGraph AI
 Codebase Analyzer. It performs three stages:
 
-  1. **AST Parsing** — Walks a target directory, parses every `.py` file with
-     Python's `ast` module, and extracts structural entities (modules, classes,
-     functions) plus their relationships (IMPORTS, DEFINES, CALLS).
+  1. **Multi-language Parsing (Tree-sitter)** — Walks a target directory, parses
+     every supported source file (Python, JavaScript/TypeScript, Java, Go, Rust,
+     C/C++, C#, Ruby, PHP, ...) with Tree-sitter, and extracts structural
+     entities (modules, classes, functions) plus their relationships
+     (IMPORTS, DEFINES, CALLS). See `ingestion/treesitter_parser.py`.
 
   2. **Knowledge Graph Ingestion (Neo4j)** — Writes the extracted entities as
      nodes and relationships into Neo4j using MERGE-based idempotent Cypher
@@ -20,6 +22,8 @@ Codebase Analyzer. It performs three stages:
      vectors + metadata into Qdrant for semantic retrieval.
 
 Design Decisions:
+  - Parsing is delegated to a language-agnostic Tree-sitter walker so the same
+    pipeline works across many programming languages.
   - All Neo4j writes use MERGE (not CREATE) to make the pipeline idempotent.
   - Embedding calls are batched to respect rate limits and minimize latency.
   - The parser is decoupled from the agent layer — it's a CLI-invocable
@@ -31,16 +35,12 @@ Usage:
 ==============================================================================
 """
 
-import ast
 import hashlib
 import logging
-import os
 import sys
 import uuid
-from dataclasses import dataclass, field
 from pathlib import Path
 from textwrap import dedent
-from typing import Any
 
 from neo4j import GraphDatabase
 from qdrant_client.models import (
@@ -57,6 +57,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from config import settings  # noqa: E402
 from qdrant_util import get_qdrant_client, qdrant_connection_label  # noqa: E402
 
+# Tree-sitter based, multi-language extraction (Stage 1). The data model
+# (ExtractedEntity / ExtractedRelationship / ParseResult) and `parse_codebase`
+# keep the same public shape the rest of the pipeline relies on.
+from ingestion.treesitter_parser import (  # noqa: E402
+    ExtractedEntity,
+    ExtractedRelationship,
+    ParseResult,
+    parse_codebase,
+    parse_file,
+)
+
 # ── Logging ──────────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
@@ -64,303 +75,18 @@ logging.basicConfig(
 )
 logger = logging.getLogger("ingestion.parser")
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Stage 1 — AST Extraction
-# ══════════════════════════════════════════════════════════════════════════════
-
-
-@dataclass
-class ExtractedEntity:
-    """
-    A single structural entity discovered by the AST walker.
-
-    Fields:
-        entity_type : One of "module", "class", "function".
-        qualified_name : Dot-separated fully-qualified name (e.g., "pkg.mod.ClassName.method").
-        file_path : Absolute path to the source file.
-        start_line : Starting line number in the source file.
-        end_line : Ending line number in the source file.
-        docstring : The entity's docstring (empty string if absent).
-        source_code : Raw source text of the entity.
-        parent_qname : Qualified name of the containing entity (None for top-level modules).
-    """
-    entity_type: str
-    qualified_name: str
-    file_path: str
-    start_line: int
-    end_line: int
-    docstring: str
-    source_code: str
-    parent_qname: Optional[str] = None
-
-
-@dataclass
-class ExtractedRelationship:
-    """
-    A directed edge between two entities.
-
-    Fields:
-        source_qname : Qualified name of the source entity.
-        target_qname : Qualified name of the target entity.
-        rel_type : One of "IMPORTS", "DEFINES", "CALLS", "CONTAINS".
-    """
-    source_qname: str
-    target_qname: str
-    rel_type: str
-
-
-@dataclass
-class ParseResult:
-    """Aggregated output from a full codebase parse."""
-    entities: list[ExtractedEntity] = field(default_factory=list)
-    relationships: list[ExtractedRelationship] = field(default_factory=list)
-
-
-class CodebaseASTVisitor(ast.NodeVisitor):
-    """
-    AST visitor that recursively extracts structural entities and relationships
-    from a single Python source file.
-
-    Walk strategy:
-      - Module-level: capture imports, top-level functions, top-level classes.
-      - Class-level: capture methods and nested classes.
-      - Function-level: capture function calls (simple name resolution).
-
-    Limitations (documented for transparency):
-      - Call resolution is name-based, not type-aware. `foo.bar()` resolves
-        to the attribute chain string, but we don't perform type inference.
-      - Star imports (`from x import *`) are recorded as importing module `x`.
-    """
-
-    def __init__(self, file_path: str, module_qname: str, source_lines: list[str]):
-        self.file_path = file_path
-        self.module_qname = module_qname
-        self.source_lines = source_lines
-        self.result = ParseResult()
-
-        # Register the module itself as an entity
-        full_source = "\n".join(source_lines)
-        module_doc = ast.get_docstring(ast.parse(full_source)) or ""
-        self.result.entities.append(
-            ExtractedEntity(
-                entity_type="module",
-                qualified_name=module_qname,
-                file_path=file_path,
-                start_line=1,
-                end_line=len(source_lines),
-                docstring=module_doc,
-                source_code=full_source[:2000],  # Cap module source for embedding
-            )
-        )
-
-        # Stack tracks the current scope for qualified-name construction
-        self._scope_stack: list[str] = [module_qname]
-
-    # ── Helpers ──────────────────────────────────────────────────────────
-
-    def _current_scope(self) -> str:
-        return self._scope_stack[-1]
-
-    def _make_qname(self, name: str) -> str:
-        return f"{self._current_scope()}.{name}"
-
-    def _extract_source(self, node: ast.AST) -> str:
-        """Extract raw source lines for a given AST node."""
-        try:
-            return ast.get_source_segment("\n".join(self.source_lines), node) or ""
-        except Exception:
-            # Fallback: use line range
-            start = getattr(node, "lineno", 1) - 1
-            end = getattr(node, "end_lineno", start + 1)
-            return "\n".join(self.source_lines[start:end])
-
-    # ── Visitors ─────────────────────────────────────────────────────────
-
-    def visit_Import(self, node: ast.Import) -> None:
-        """Handle `import foo, bar` statements."""
-        for alias in node.names:
-            self.result.relationships.append(
-                ExtractedRelationship(
-                    source_qname=self._current_scope(),
-                    target_qname=alias.name,
-                    rel_type="IMPORTS",
-                )
-            )
-        self.generic_visit(node)
-
-    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
-        """Handle `from foo import bar` statements."""
-        module = node.module or ""
-        for alias in node.names:
-            target = f"{module}.{alias.name}" if module else alias.name
-            self.result.relationships.append(
-                ExtractedRelationship(
-                    source_qname=self._current_scope(),
-                    target_qname=target,
-                    rel_type="IMPORTS",
-                )
-            )
-        self.generic_visit(node)
-
-    def visit_ClassDef(self, node: ast.ClassDef) -> None:
-        """Extract class entity and DEFINES/CONTAINS relationships."""
-        qname = self._make_qname(node.name)
-        docstring = ast.get_docstring(node) or ""
-        source = self._extract_source(node)
-
-        self.result.entities.append(
-            ExtractedEntity(
-                entity_type="class",
-                qualified_name=qname,
-                file_path=self.file_path,
-                start_line=node.lineno,
-                end_line=node.end_lineno or node.lineno,
-                docstring=docstring,
-                source_code=source[:3000],  # Cap for embedding
-                parent_qname=self._current_scope(),
-            )
-        )
-
-        # The current scope DEFINES this class
-        self.result.relationships.append(
-            ExtractedRelationship(
-                source_qname=self._current_scope(),
-                target_qname=qname,
-                rel_type="DEFINES",
-            )
-        )
-
-        # Recurse into the class body with updated scope
-        self._scope_stack.append(qname)
-        self.generic_visit(node)
-        self._scope_stack.pop()
-
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-        """Extract function/method entity and DEFINES relationship."""
-        qname = self._make_qname(node.name)
-        docstring = ast.get_docstring(node) or ""
-        source = self._extract_source(node)
-
-        self.result.entities.append(
-            ExtractedEntity(
-                entity_type="function",
-                qualified_name=qname,
-                file_path=self.file_path,
-                start_line=node.lineno,
-                end_line=node.end_lineno or node.lineno,
-                docstring=docstring,
-                source_code=source[:3000],
-                parent_qname=self._current_scope(),
-            )
-        )
-
-        self.result.relationships.append(
-            ExtractedRelationship(
-                source_qname=self._current_scope(),
-                target_qname=qname,
-                rel_type="DEFINES",
-            )
-        )
-
-        # Recurse into the function body with updated scope
-        self._scope_stack.append(qname)
-        self.generic_visit(node)
-        self._scope_stack.pop()
-
-    # Async functions follow the same extraction logic
-    visit_AsyncFunctionDef = visit_FunctionDef
-
-    def visit_Call(self, node: ast.Call) -> None:
-        """
-        Extract CALLS relationships from function call expressions.
-
-        Handles:
-          - Simple calls: `foo()`       → CALLS "foo"
-          - Attribute calls: `obj.foo()` → CALLS "obj.foo"
-          - Chained calls: `a.b.c()`    → CALLS "a.b.c"
-        """
-        callee_name = self._resolve_call_name(node.func)
-        if callee_name:
-            self.result.relationships.append(
-                ExtractedRelationship(
-                    source_qname=self._current_scope(),
-                    target_qname=callee_name,
-                    rel_type="CALLS",
-                )
-            )
-        self.generic_visit(node)
-
-    @staticmethod
-    def _resolve_call_name(node: ast.expr) -> Optional[str]:
-        """Recursively resolve a call target to a dotted name string."""
-        if isinstance(node, ast.Name):
-            return node.id
-        if isinstance(node, ast.Attribute):
-            parent = CodebaseASTVisitor._resolve_call_name(node.value)
-            if parent:
-                return f"{parent}.{node.attr}"
-            return node.attr
-        return None
-
-
-def parse_codebase(root_dir: str) -> ParseResult:
-    """
-    Walk a directory tree, parse all `.py` files, and return aggregated
-    structural entities and relationships.
-
-    Args:
-        root_dir: Absolute or relative path to the codebase root.
-
-    Returns:
-        ParseResult containing all discovered entities and relationships.
-    """
-    root = Path(root_dir).resolve()
-    if not root.is_dir():
-        raise FileNotFoundError(f"Codebase root not found: {root}")
-
-    aggregated = ParseResult()
-    py_files = sorted(root.rglob("*.py"))
-    logger.info(f"Discovered {len(py_files)} Python files in {root}")
-
-    for py_file in py_files:
-        # Skip hidden directories and common non-source dirs
-        parts = py_file.relative_to(root).parts
-        if any(p.startswith(".") or p in {"__pycache__", "venv", ".venv", "node_modules"} for p in parts):
-            continue
-
-        try:
-            source = py_file.read_text(encoding="utf-8", errors="replace")
-            tree = ast.parse(source, filename=str(py_file))
-        except SyntaxError as e:
-            logger.warning(f"Syntax error in {py_file}: {e}. Skipping.")
-            continue
-
-        # Build a dotted module name from the relative path
-        relative = py_file.relative_to(root)
-        module_parts = list(relative.parts)
-        if module_parts[-1] == "__init__.py":
-            module_parts = module_parts[:-1]  # package itself
-        else:
-            module_parts[-1] = module_parts[-1].removesuffix(".py")
-        module_qname = ".".join(module_parts) if module_parts else relative.stem
-
-        source_lines = source.splitlines()
-        visitor = CodebaseASTVisitor(
-            file_path=str(py_file),
-            module_qname=module_qname,
-            source_lines=source_lines,
-        )
-        visitor.visit(tree)
-
-        aggregated.entities.extend(visitor.result.entities)
-        aggregated.relationships.extend(visitor.result.relationships)
-
-    logger.info(
-        f"Extraction complete: {len(aggregated.entities)} entities, "
-        f"{len(aggregated.relationships)} relationships"
-    )
-    return aggregated
+# Re-export so existing imports like `from ingestion.parser import parse_codebase`
+# keep working unchanged.
+__all__ = [
+    "ExtractedEntity",
+    "ExtractedRelationship",
+    "ParseResult",
+    "parse_codebase",
+    "parse_file",
+    "Neo4jWriter",
+    "QdrantWriter",
+    "run_ingestion",
+]
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -377,7 +103,9 @@ class Neo4jWriter:
     Schema:
         Nodes:   (:Module), (:Class), (:Function)
                  All share properties: qualified_name, file_path, start_line,
-                 end_line, docstring_preview (first 200 chars).
+                 end_line, docstring_preview (first 200 chars), entity_type,
+                 plus language and kind (fine-grained type) for multi-language
+                 context.
         Edges:   [:IMPORTS], [:DEFINES], [:CALLS], [:CONTAINS]
     """
 
@@ -420,7 +148,9 @@ class Neo4jWriter:
                         n.start_line  = $start_line,
                         n.end_line    = $end_line,
                         n.docstring_preview = $docstring_preview,
-                        n.entity_type = $entity_type
+                        n.entity_type = $entity_type,
+                        n.language    = $language,
+                        n.kind        = $kind
                 """)
                 session.run(
                     cypher,
@@ -430,6 +160,8 @@ class Neo4jWriter:
                     end_line=entity.end_line,
                     docstring_preview=entity.docstring[:200],
                     entity_type=entity.entity_type,
+                    language=getattr(entity, "language", "") or "",
+                    kind=getattr(entity, "kind", "") or entity.entity_type,
                 )
         logger.info(f"Wrote {len(entities)} entity nodes to Neo4j")
 
@@ -555,6 +287,8 @@ class QdrantWriter:
                     "file_path": entity.file_path,
                     "start_line": entity.start_line,
                     "end_line": entity.end_line,
+                    "language": getattr(entity, "language", "") or "",
+                    "kind": getattr(entity, "kind", "") or entity.entity_type,
                     "text": text[:2000],  # Store truncated text in payload
                 }
                 # Placeholder — vector will be filled during batch embed
@@ -596,7 +330,7 @@ class QdrantWriter:
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-def run_ingestion(codebase_path: Optional[str] = None) -> dict[str, int]:
+def run_ingestion(codebase_path: str | None = None) -> dict[str, int]:
     """
     End-to-end ingestion pipeline: Parse → Neo4j → Qdrant.
 
